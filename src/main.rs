@@ -4,6 +4,7 @@
 mod config;
 mod model;
 mod partition;
+mod runner;
 mod size;
 
 fn main() {}
