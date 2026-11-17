@@ -2,7 +2,6 @@
 use std::collections::HashSet;
 use std::path::Path;
 
-use glob::Pattern;
 use serde::{Deserialize, Deserializer};
 
 use crate::config::DockerConfig;
@@ -81,9 +80,61 @@ fn run(argv: &[&str], with_ids: bool) -> Remover {
 }
 
 fn matches(name: &str, patterns: &[String]) -> bool {
-    patterns
-        .iter()
-        .any(|p| Pattern::new(p).is_ok_and(|p| p.matches(name)))
+    let name: Vec<char> = name.chars().collect();
+    patterns.iter().any(|p| fnmatch(&name, &p.chars().collect::<Vec<_>>()))
+}
+
+/// Python's fnmatch on POSIX: `*`, `?`, `[seq]`, `[!seq]`; every string is a valid pattern
+/// (a `[` without its `]` is a literal), so a protect pattern can never silently match nothing.
+fn fnmatch(name: &[char], pat: &[char]) -> bool {
+    match pat.first() {
+        None => name.is_empty(),
+        Some('*') => (0..=name.len()).any(|i| fnmatch(&name[i..], &pat[1..])),
+        Some('?') => !name.is_empty() && fnmatch(&name[1..], &pat[1..]),
+        Some('[') => match bracket(pat) {
+            Some((set_matches, rest)) => {
+                name.first().is_some_and(|&c| set_matches(c)) && fnmatch(&name[1..], &pat[rest..])
+            }
+            None => name.first() == Some(&'[') && fnmatch(&name[1..], &pat[1..]),
+        },
+        Some(&c) => name.first() == Some(&c) && fnmatch(&name[1..], &pat[1..]),
+    }
+}
+
+/// `pat` starts with `[`: a predicate for the set and the index after its `]`, or None
+/// when there is no closing `]`.
+fn bracket(pat: &[char]) -> Option<(impl Fn(char) -> bool + '_, usize)> {
+    let mut i = 1;
+    let negate = pat.get(i) == Some(&'!');
+    if negate {
+        i += 1;
+    }
+    let start = i;
+    if pat.get(i) == Some(&']') {
+        i += 1; // a `]` right after `[` or `[!` is part of the set
+    }
+    while pat.get(i)? != &']' {
+        i += 1;
+    }
+    let set = &pat[start..i];
+    let contains = move |c: char| {
+        let mut j = 0;
+        while j < set.len() {
+            if j + 2 < set.len() && set[j + 1] == '-' {
+                if set[j] <= c && c <= set[j + 2] {
+                    return true;
+                }
+                j += 3;
+            } else {
+                if set[j] == c {
+                    return true;
+                }
+                j += 1;
+            }
+        }
+        false
+    };
+    Some((move |c| contains(c) != negate, i + 1))
 }
 
 fn is_anonymous(name: &str) -> bool {
@@ -206,7 +257,11 @@ pub fn classify(df: &DockerDf, cfg: &DockerConfig, root: &Path) -> Vec<Category>
         let in_use = [i.repository.as_str(), &id, &i.id, &short]
             .iter()
             .any(|r| running.contains(r));
-        let key = if i.containers.trim().parse::<i64>().unwrap_or(0) > 0 {
+        // A count Docker did not give as a number counts as in use: never offered for removal.
+        let Ok(containers) = i.containers.trim().parse::<i64>() else {
+            continue;
+        };
+        let key = if containers > 0 {
             if in_use {
                 continue;
             }
@@ -237,8 +292,8 @@ pub fn classify(df: &DockerDf, cfg: &DockerConfig, root: &Path) -> Vec<Category>
     }
 
     for v in &df.volumes {
-        if v.links.trim().parse::<i64>().unwrap_or(0) > 0 {
-            continue;
+        if v.links.trim().parse::<i64>().map_or(true, |links| links > 0) {
+            continue; // in use, or a count that is not a number
         }
         let key = if is_anonymous(&v.name) {
             ANON_VOLUMES
@@ -543,6 +598,50 @@ mod tests {
             k["build_cache"].items[0].label,
             format!("{:15}  geteilt pulled", "5 months ago")
         );
+    }
+
+    #[test]
+    fn patterns_follow_fnmatch() {
+        let m = |name: &str, p: &str| matches(name, &[p.to_string()]);
+        assert!(m("my_db", "**db**"));
+        assert!(m("[db", "[db"));
+        assert!(m("db[", "db["));
+        assert!(m("v1", "v[0-9]"));
+        assert!(!m("va", "v[0-9]"));
+        assert!(m("bx", "[!a]x") && !m("ax", "[!a]x"));
+        assert!(m("ab", "a?") && !m("abc", "a?"));
+        assert!(m("a/b", "a*"));
+        assert!(m("x.y", "x.y") && !m("xzy", "x.y"));
+        assert!(!m("Proj_DB", "*db*"));
+    }
+
+    #[test]
+    fn protect_pattern_glob_crate_rejects_still_protects() {
+        let cfg = DockerConfig { cache_volumes: vec!["*cache*".into()], protect_volumes: vec!["**db**".into()] };
+        let df = DockerDf {
+            volumes: vec![DfVolume { name: "pg_db_cache".into(), links: "0".into(), size: "1GB".into() }],
+            ..Default::default()
+        };
+        let cats = classify(&df, &cfg, Path::new("/"));
+        assert_eq!(ids(&cats, "protected_volumes"), ["pg_db_cache"]);
+    }
+
+    #[test]
+    fn unparseable_counts_are_in_use() {
+        let df = DockerDf {
+            volumes: vec![DfVolume { name: ANON.into(), links: "N/A".into(), size: "1GB".into() }],
+            images: vec![DfImage {
+                id: "sha256:1".into(),
+                repository: "<none>".into(),
+                tag: "<none>".into(),
+                containers: "N/A".into(),
+                unique_size: "1GB".into(),
+                created_since: String::new(),
+            }],
+            ..Default::default()
+        };
+        let cats = classify(&df, &DockerConfig::default(), Path::new("/"));
+        assert!(cats.iter().filter(|c| c.is_clean()).all(|c| c.items.is_empty()));
     }
 
     #[test]
