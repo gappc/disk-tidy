@@ -149,7 +149,7 @@ mod tests {
 
     #[test]
     fn user_config_parses() {
-        let p = Path::new(env!("CARGO_MANIFEST_DIR")).join("python/config.example.toml");
+        let p = Path::new(env!("CARGO_MANIFEST_DIR")).join("config.example.toml");
         assert_eq!(load(&p).unwrap().docker.cache_volumes.len(), 3);
     }
 

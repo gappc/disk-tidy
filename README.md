@@ -46,10 +46,12 @@ Details:
 ## Install
 
 ```sh
-./install.sh   # symlink ~/.local/bin/disk-tidy, create ~/.config/disk-tidy/config.toml
+./install.sh               # build, install ~/.local/bin/disk-tidy, create ~/.config/disk-tidy/config.toml
+./install.sh --uninstall   # remove the binary, keep the config
 ```
 
-Requires Python 3.11+ (uses `tomllib`), no other dependencies.
+Requires Rust 1.99 (edition 2024) to build. Docker, snap, journalctl and apt are called as external
+commands when present.
 
 ## Config
 
@@ -59,5 +61,9 @@ config no named Docker volume is ever removed.
 ## Tests
 
 ```sh
-python3 -m unittest discover -s tests
+cargo test
+cargo clippy --all-targets -- -D warnings
 ```
+
+`testdata/` holds expected output that the earlier Python version produced; the rendering tests
+compare against it byte for byte.

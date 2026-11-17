@@ -1,7 +1,7 @@
 # Copy to ~/.config/disk-tidy/config.toml. Every key is optional; missing keys use the defaults shown.
 
 [docker]
-# Named volumes without a container that `clean` may remove: pure caches, safe to rebuild (fnmatch globs).
+# Named volumes without a container that `clean` may remove: pure caches, safe to rebuild (globs).
 cache_volumes = ["*gobuild*", "*gomod*", "cmcache"]
 # Never removed, even if matched above.
 protect_volumes = ["*db*", "*data*"]
