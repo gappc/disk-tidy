@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use crate::config::home;
 use crate::model::{Category, Item, Remover, Safety};
-use crate::size::dir_size;
+use crate::size::dir_sizes;
 
 pub fn trash_dir() -> PathBuf {
     home().join(".local/share/Trash")
@@ -23,10 +23,12 @@ pub fn collect(base: &Path) -> Vec<Category> {
         base: base.to_path_buf(),
     });
     if let Ok(entries) = fs::read_dir(base.join("files")) {
-        for e in entries.flatten() {
-            let path = e.path();
+        let entries: Vec<fs::DirEntry> = entries.flatten().collect();
+        let paths: Vec<PathBuf> = entries.iter().map(|e| e.path()).collect();
+        let sizes = dir_sizes(&paths.iter().map(PathBuf::as_path).collect::<Vec<_>>());
+        for ((e, path), size) in entries.iter().zip(paths).zip(sizes) {
             cat.items.push(Item {
-                size: dir_size(&path),
+                size,
                 id: path.display().to_string(),
                 label: e.file_name().to_string_lossy().into_owned(),
                 path: Some(path),
@@ -226,6 +228,16 @@ mod tests {
         );
         assert!(!remove_entries(&items, b, &mut ClosedPipe));
         assert!(names(&b.join("files")).is_empty());
+    }
+
+    #[test]
+    fn shared_hardlinks_count_once_in_total() {
+        let dir = tempfile::tempdir().unwrap();
+        let b = dir.path();
+        touch(&b.join("files/a"), &[1u8; 200_000]);
+        fs::hard_link(b.join("files/a"), b.join("files/b")).unwrap();
+        let total = collect(b)[0].total();
+        assert!((200_000..400_000).contains(&total), "{total}");
     }
 
     #[test]

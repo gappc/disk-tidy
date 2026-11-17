@@ -47,10 +47,15 @@ pub fn fmt_size(n: u64) -> String {
     unreachable!()
 }
 
-/// Allocated bytes like `du -s`: st_blocks*512, hard links once, symlinks not followed,
-/// unreadable parts skipped.
-pub fn dir_size(path: &Path) -> u64 {
+/// Allocated bytes per path like one `du -s a b ...`: st_blocks*512, symlinks not followed,
+/// unreadable parts skipped, and a file hard-linked several times (also across the paths)
+/// counts only once, for the first path, so the sizes add up to what removing all of them frees.
+pub fn dir_sizes(paths: &[&Path]) -> Vec<u64> {
     let mut seen = HashSet::new();
+    paths.iter().map(|p| walk(p, &mut seen)).collect()
+}
+
+fn walk(path: &Path, seen: &mut HashSet<(u64, u64)>) -> u64 {
     let mut total = 0;
     let mut stack = vec![path.to_path_buf()];
     while let Some(p) = stack.pop() {
@@ -75,6 +80,10 @@ mod tests {
     use super::*;
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
+
+    fn dir_size(path: &Path) -> u64 {
+        dir_sizes(&[path])[0]
+    }
 
     #[test]
     fn parse_docker_units() {
@@ -120,6 +129,20 @@ mod tests {
         let n = dir_size(dir.path());
         fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
         assert!(n >= 100_000, "{n}");
+    }
+
+    #[test]
+    fn dir_sizes_count_shared_hardlink_once_like_du() {
+        let dir = tempfile::tempdir().unwrap();
+        let (a, b) = (dir.path().join("a"), dir.path().join("b"));
+        fs::create_dir(&a).unwrap();
+        fs::create_dir(&b).unwrap();
+        fs::write(a.join("f"), vec![1u8; 100_000]).unwrap();
+        fs::hard_link(a.join("f"), b.join("f")).unwrap();
+        let sizes = dir_sizes(&[a.as_path(), b.as_path()]);
+        assert!(sizes[0] >= 100_000, "{sizes:?}");
+        assert!(sizes[1] < 100_000, "{sizes:?}"); // du -s a b: the link counts in a only
+        assert_eq!(dir_sizes(&[b.as_path()])[0], dir_size(&b));
     }
 
     #[test]

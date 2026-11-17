@@ -7,7 +7,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::config::{ProjectsConfig, expand_home, home};
 use crate::model::{Category, Item, Remover, Safety};
-use crate::size::dir_size;
+use crate::size::dir_sizes;
 
 /// Build dir name -> files of which at least one must sit next to it. Without such a file the
 /// directory is not treated as build output (a folder that happens to be called "target" stays).
@@ -188,7 +188,19 @@ pub fn collect(cfg: &ProjectsConfig, now: SystemTime) -> Vec<Category> {
     if found.is_empty() {
         return Vec::new();
     }
-    classify_dirs(found, &dir_size, cfg.stale_days, now)
+    // One pass over all build dirs, like one `du -s`: shared hard links count once.
+    let dirs: Vec<&Path> = found.iter().map(|(b, _)| b.as_path()).collect();
+    let sizes: HashMap<PathBuf, u64> = dirs
+        .iter()
+        .map(|d| d.to_path_buf())
+        .zip(dir_sizes(&dirs))
+        .collect();
+    classify_dirs(
+        found,
+        &|b| sizes.get(b).copied().unwrap_or(0),
+        cfg.stale_days,
+        now,
+    )
 }
 
 /// Deletes the listed build dirs; refuses symlinks, non-directories and other names.
@@ -434,6 +446,24 @@ mod tests {
         assert_eq!(cats[0].items.len(), 1);
         assert!(remove_build_dirs(&cats[0].items, &mut Vec::new()));
         assert!(!project.join("node_modules").exists());
+    }
+
+    #[test]
+    fn shared_hardlinks_count_once_in_total() {
+        let dir = tempfile::tempdir().unwrap();
+        let r = dir.path();
+        for p in ["p1", "p2"] {
+            touch(&r.join(p).join("package.json"), 60);
+            fs::create_dir_all(r.join(p).join("node_modules")).unwrap();
+        }
+        fs::write(r.join("p1/node_modules/f"), vec![1u8; 200_000]).unwrap();
+        fs::hard_link(r.join("p1/node_modules/f"), r.join("p2/node_modules/f")).unwrap();
+        let cfg = ProjectsConfig {
+            roots: vec![r.display().to_string()],
+            stale_days: 28,
+        };
+        let total = collect(&cfg, SystemTime::now())[0].total();
+        assert!((200_000..400_000).contains(&total), "{total}");
     }
 
     #[test]

@@ -3,7 +3,7 @@ use std::path::Path;
 
 use crate::config::{ShowConfig, expand_home, home};
 use crate::model::{Category, Item, Safety};
-use crate::size::dir_size;
+use crate::size::dir_sizes;
 
 pub fn collect(cfg: &ShowConfig) -> Vec<Category> {
     let paths: Vec<String> = cfg
@@ -21,10 +21,12 @@ pub fn collect(cfg: &ShowConfig) -> Vec<Category> {
         Safety::Info,
         "z. B. Mail-Profile; wird nie gelöscht",
     );
+    let sizes = dir_sizes(&paths.iter().map(Path::new).collect::<Vec<_>>());
     cat.items = paths
         .iter()
-        .map(|p| Item {
-            size: dir_size(Path::new(p)),
+        .zip(sizes)
+        .map(|(p, size)| Item {
+            size,
             id: p.clone(),
             label: tilde(p),
             path: None,
@@ -72,6 +74,21 @@ mod tests {
         let home = crate::config::home().display().to_string();
         assert_eq!(tilde(&format!("{home}/snap/x/common")), "~/snap/x/common");
         assert_eq!(tilde("/srv/x"), "/srv/x");
+    }
+
+    #[test]
+    fn shared_hardlinks_count_once_in_total() {
+        let dir = tempfile::tempdir().unwrap();
+        for d in ["x/common", "y/common"] {
+            fs::create_dir_all(dir.path().join(d)).unwrap();
+        }
+        fs::write(dir.path().join("x/common/f"), vec![1u8; 200_000]).unwrap();
+        fs::hard_link(dir.path().join("x/common/f"), dir.path().join("y/common/f")).unwrap();
+        let cfg = ShowConfig {
+            paths: vec![format!("{}/*/common", dir.path().display())],
+        };
+        let total = collect(&cfg)[0].total();
+        assert!((200_000..400_000).contains(&total), "{total}");
     }
 
     #[test]
