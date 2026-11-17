@@ -3,6 +3,7 @@
 
 mod config;
 mod model;
+mod modules;
 mod partition;
 mod runner;
 mod size;
