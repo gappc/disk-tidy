@@ -1,0 +1,8 @@
+# Copy to ~/.config/docker-tidy/config.toml
+# Glob patterns (fnmatch) on volume names. Only volumes without a container are considered.
+
+# Named volumes that `docker-tidy clean` may remove: pure caches, safe to rebuild.
+cache_volumes = ["*gobuild*", "*gomod*", "cmcache"]
+
+# Never removed, even if matched above. Default if unset: ["*db*", "*data*"]
+protect_volumes = ["*db*", "*data*"]
