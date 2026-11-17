@@ -58,6 +58,41 @@ mod tests {
         assert_eq!(mount_point(Path::new("/")), PathBuf::from("/"));
     }
 
+    /// Same grouping as the Python version (`os.path.ismount` walking up from the resolved path),
+    /// on whatever mounts this machine has. Skipped without python3.
+    #[test]
+    fn mount_point_matches_python_ismount() {
+        let mounts = std::fs::read_to_string("/proc/self/mountinfo").unwrap_or_default();
+        let mut paths: Vec<PathBuf> = mounts
+            .lines()
+            .filter_map(|l| l.split(' ').nth(4))
+            .filter(|m| {
+                !m.starts_with("/proc/")
+                    && !m.starts_with("/sys/")
+                    && !m.starts_with("/run/snapd/ns")
+            })
+            .map(|m| PathBuf::from(m.replace("\\040", " ")))
+            .collect();
+        paths.extend(paths.clone().into_iter().map(|m| m.join("does/not/exist")));
+        paths.push(crate::config::home().join("snap"));
+        paths.push(PathBuf::from("/var/lib/docker"));
+        let script = "import os,sys\nfrom pathlib import Path\nfor a in sys.argv[1:]:\n    p=Path(a)\n    while not p.exists(): p=p.parent\n    p=p.resolve()\n    while not os.path.ismount(p): p=p.parent\n    print(p)";
+        let Ok(out) = std::process::Command::new("python3")
+            .arg("-c")
+            .arg(script)
+            .args(&paths)
+            .output()
+        else {
+            return;
+        };
+        let expected = String::from_utf8(out.stdout).unwrap();
+        let got: String = paths
+            .iter()
+            .map(|p| format!("{}\n", mount_point(p).display()))
+            .collect();
+        assert_eq!(got, expected);
+    }
+
     #[test]
     fn disk_usage_root() {
         let u = disk_usage(Path::new("/"));

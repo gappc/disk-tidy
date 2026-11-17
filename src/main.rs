@@ -11,7 +11,7 @@ mod render;
 mod runner;
 mod size;
 
-use std::io::{self, IsTerminal};
+use std::io::{self, IsTerminal, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -91,10 +91,9 @@ fn main() -> ExitCode {
     let usage = partition::disk_usage;
 
     if cli.command == Command::Preview {
-        print!(
-            "{}",
-            render::render_preview(&cats, cli.details, cli.top, &style, &usage)
-        );
+        let text = render::render_preview(&cats, cli.details, cli.top, &style, &usage);
+        let _ = io::stdout().write_all(text.as_bytes()); // a closed pipe (| head) is fine
+
         return ExitCode::SUCCESS;
     }
     let opts = CleanOptions {

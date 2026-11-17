@@ -107,8 +107,8 @@ pub fn clean(
         let _ = writeln!(out, "→ {}", c.title);
         let _ = out.flush();
         match &c.remover {
-            Remover::BuildDirs => ok &= remove_build_dirs(&c.items),
-            Remover::Trash { base } => ok &= remove_entries(&c.items, base),
+            Remover::BuildDirs => ok &= remove_build_dirs(&c.items, out),
+            Remover::Trash { base } => ok &= remove_entries(&c.items, base, out),
             Remover::None => {}
             Remover::Run { .. } | Remover::SnapRevisions => {
                 for cmd in commands_for(c) {

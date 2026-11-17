@@ -1,5 +1,6 @@
 //! The desktop trash (~/.local/share/Trash).
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use crate::config::home;
@@ -36,7 +37,8 @@ pub fn collect(base: &Path) -> Vec<Category> {
 }
 
 /// Deletes direct children of base/files and their base/info/<name>.trashinfo; refuses others.
-pub fn remove_entries(items: &[Item], base: &Path) -> bool {
+/// Messages go to `out`; a failing `out` (closed pipe) does not stop the removal.
+pub fn remove_entries(items: &[Item], base: &Path, out: &mut dyn Write) -> bool {
     let files = base.join("files");
     let mut ok = true;
     for i in items {
@@ -44,7 +46,7 @@ pub fn remove_entries(items: &[Item], base: &Path) -> bool {
         let p = target.as_path();
         // file_name() is None for a path ending in "..", which parent() would otherwise accept
         let (Some(name), true) = (p.file_name(), p.parent() == Some(files.as_path())) else {
-            println!("  Übersprungen (nicht im Papierkorb): {}", p.display());
+            let _ = writeln!(out, "  Übersprungen (nicht im Papierkorb): {}", p.display());
             ok = false;
             continue;
         };
@@ -62,7 +64,7 @@ pub fn remove_entries(items: &[Item], base: &Path) -> bool {
             _ => Ok(()),
         });
         if let Err(e) = removed {
-            println!("  Fehler: {}: {e}", p.display());
+            let _ = writeln!(out, "  Fehler: {}: {e}", p.display());
             ok = false;
         }
     }
@@ -119,7 +121,7 @@ mod tests {
         let mut labels: Vec<&str> = c.items.iter().map(|i| i.label.as_str()).collect();
         labels.sort();
         assert_eq!(labels, ["a.txt", "dir"]);
-        assert!(remove_entries(&c.items, b));
+        assert!(remove_entries(&c.items, b, &mut Vec::new()));
         assert!(names(&b.join("files")).is_empty());
         assert!(names(&b.join("info")).is_empty());
     }
@@ -135,7 +137,7 @@ mod tests {
             label: String::new(),
             path: None,
         };
-        assert!(!remove_entries(&[item], dir.path()));
+        assert!(!remove_entries(&[item], dir.path(), &mut Vec::new()));
         assert!(outside.exists());
     }
 
@@ -149,7 +151,7 @@ mod tests {
             label: String::new(),
             path: None,
         };
-        assert!(!remove_entries(&[item], dir.path()));
+        assert!(!remove_entries(&[item], dir.path(), &mut Vec::new()));
         assert!(dir.path().join("files/a.txt").exists());
     }
 
@@ -168,7 +170,7 @@ mod tests {
         let mut labels: Vec<&str> = cats[0].items.iter().map(|i| i.label.as_str()).collect();
         labels.sort();
         assert_eq!(labels, ["01 · Einstieg & Startscreen.png", "a b"]);
-        assert!(remove_entries(&cats[0].items, b));
+        assert!(remove_entries(&cats[0].items, b, &mut Vec::new()));
         assert!(names(&b.join("files")).is_empty());
         assert!(names(&b.join("info")).is_empty());
     }
@@ -187,9 +189,43 @@ mod tests {
         );
         let cats = collect(b);
         assert_eq!(cats[0].items.len(), 1);
-        assert!(remove_entries(&cats[0].items, b));
+        assert!(remove_entries(&cats[0].items, b, &mut Vec::new()));
         assert!(names(&b.join("files")).is_empty());
         assert!(names(&b.join("info")).is_empty());
+    }
+
+    /// stdout closed (`disk-tidy clean --yes | head -1`): messages fail, removal goes on.
+    struct ClosedPipe;
+    impl std::io::Write for ClosedPipe {
+        fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::ErrorKind::BrokenPipe.into())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Err(std::io::ErrorKind::BrokenPipe.into())
+        }
+    }
+
+    #[test]
+    fn messages_go_to_writer_and_closed_pipe_does_not_stop_removal() {
+        let dir = trash();
+        let b = dir.path();
+        let outside = Item {
+            size: 0,
+            id: b.join("keep.txt").display().to_string(),
+            label: String::new(),
+            path: None,
+        };
+        let mut items = vec![outside];
+        items.extend(collect(b)[0].items.clone());
+        let mut out = Vec::new();
+        assert!(!remove_entries(&items[..1], b, &mut out));
+        assert!(
+            String::from_utf8(out)
+                .unwrap()
+                .starts_with("  Übersprungen (nicht im Papierkorb): ")
+        );
+        assert!(!remove_entries(&items, b, &mut ClosedPipe));
+        assert!(names(&b.join("files")).is_empty());
     }
 
     #[test]

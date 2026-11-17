@@ -1,6 +1,7 @@
 //! Build directories in project trees (node_modules, target, .venv).
 use std::collections::HashMap;
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -191,7 +192,8 @@ pub fn collect(cfg: &ProjectsConfig, now: SystemTime) -> Vec<Category> {
 }
 
 /// Deletes the listed build dirs; refuses symlinks, non-directories and other names.
-pub fn remove_build_dirs(items: &[Item]) -> bool {
+/// Messages go to `out`; a failing `out` (closed pipe) does not stop the removal.
+pub fn remove_build_dirs(items: &[Item], out: &mut dyn Write) -> bool {
     let mut ok = true;
     for i in items {
         let target = i.target();
@@ -200,12 +202,12 @@ pub fn remove_build_dirs(items: &[Item]) -> bool {
             && p.file_name()
                 .is_some_and(|n| markers(&n.to_string_lossy()).is_some());
         if !is_build_dir {
-            println!("  Übersprungen (kein Build-Ordner): {}", p.display());
+            let _ = writeln!(out, "  Übersprungen (kein Build-Ordner): {}", p.display());
             ok = false;
             continue;
         }
         if let Err(e) = fs::remove_dir_all(p) {
-            println!("  Fehler: {}: {e}", p.display());
+            let _ = writeln!(out, "  Fehler: {}: {e}", p.display());
             ok = false;
         }
     }
@@ -319,7 +321,7 @@ mod tests {
     fn remove_deletes_only_listed_build_dirs() {
         let (dir, cfg) = tree();
         let cats = collect(&cfg, SystemTime::now());
-        assert!(remove_build_dirs(&cats[0].items));
+        assert!(remove_build_dirs(&cats[0].items, &mut Vec::new()));
         let r = dir.path();
         assert!(!r.join("old/node_modules").exists());
         assert!(r.join("old/package.json").exists());
@@ -336,8 +338,13 @@ mod tests {
             label: "docs".into(),
             path: None,
         };
-        assert!(!remove_build_dirs(&[item]));
+        let mut out = Vec::new();
+        assert!(!remove_build_dirs(&[item], &mut out));
         assert!(docs.exists());
+        assert_eq!(
+            String::from_utf8(out).unwrap(),
+            format!("  Übersprungen (kein Build-Ordner): {}\n", docs.display())
+        );
     }
 
     #[test]
@@ -387,7 +394,7 @@ mod tests {
             label: String::new(),
             path: None,
         };
-        assert!(!remove_build_dirs(&[item]));
+        assert!(!remove_build_dirs(&[item], &mut Vec::new()));
         assert!(r.join("fresh/target/debug/bin").exists());
         assert!(link.exists());
     }
@@ -407,7 +414,7 @@ mod tests {
             rel(&cats[0], r),
             ["01 · Einstieg & Startscreen/node_modules"]
         );
-        assert!(remove_build_dirs(&cats[0].items));
+        assert!(remove_build_dirs(&cats[0].items, &mut Vec::new()));
         assert!(!r.join("01 · Einstieg & Startscreen/node_modules").exists());
         assert!(r.join("01 · Einstieg & Startscreen/package.json").exists());
     }
@@ -425,7 +432,7 @@ mod tests {
         };
         let cats = collect(&cfg, SystemTime::now());
         assert_eq!(cats[0].items.len(), 1);
-        assert!(remove_build_dirs(&cats[0].items));
+        assert!(remove_build_dirs(&cats[0].items, &mut Vec::new()));
         assert!(!project.join("node_modules").exists());
     }
 
