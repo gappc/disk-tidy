@@ -3,7 +3,8 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-import docker_tidy as dt  # noqa: E402
+from disk_tidy import docker as dt  # noqa: E402
+from disk_tidy.core import DEFAULT_CONFIG  # noqa: E402
 
 ANON = "a" * 64
 
@@ -46,19 +47,6 @@ DF = {
 CFG = {"cache_volumes": ["*gobuild*"], "protect_volumes": ["*dbdata*"]}
 
 
-class SizeTest(unittest.TestCase):
-    def test_parse(self):
-        self.assertEqual(dt.parse_size("0B"), 0)
-        self.assertEqual(dt.parse_size("7.834kB"), 7834)
-        self.assertEqual(dt.parse_size("1.17GB"), 1.17e9)
-        self.assertEqual(dt.parse_size("2.36GB (virtual 3GB)"), 2.36e9)
-        self.assertEqual(dt.parse_size(""), 0)
-
-    def test_format(self):
-        self.assertEqual(dt.fmt_size(1.6e9).strip(), "1.6 GB")
-        self.assertEqual(dt.fmt_size(512).strip(), "512 B")
-
-
 class ClassifyTest(unittest.TestCase):
     def setUp(self):
         self.cats = {c.key: c for c in dt.classify(DF, CFG)}
@@ -92,27 +80,9 @@ class ClassifyTest(unittest.TestCase):
         self.assertEqual(cleaned, {"dangling", "build_cache", "anon_volumes", "cache_volumes"})
 
     def test_default_config_cleans_no_named_volumes(self):
-        cats = {c.key: c for c in dt.classify(DF, dt.DEFAULT_CONFIG)}
+        cats = {c.key: c for c in dt.classify(DF, DEFAULT_CONFIG["docker"])}
         self.assertEqual(cats["cache_volumes"].items, [])
         self.assertIn("audit-gobuild", [i.ref for i in cats["named_volumes"].items])
-
-
-class ConfigTest(unittest.TestCase):
-    def test_missing_file_gives_defaults(self):
-        self.assertEqual(dt.load_config(Path("/nonexistent/x.toml")), dt.DEFAULT_CONFIG)
-
-    def test_file_overrides(self):
-        p = Path(self.tmp()) / "c.toml"
-        p.write_text('cache_volumes = ["x*"]\n')
-        cfg = dt.load_config(p)
-        self.assertEqual(cfg["cache_volumes"], ["x*"])
-        self.assertEqual(cfg["protect_volumes"], dt.DEFAULT_CONFIG["protect_volumes"])
-
-    def tmp(self):
-        import tempfile
-        d = tempfile.mkdtemp()
-        self.addCleanup(__import__("shutil").rmtree, d)
-        return d
 
 
 if __name__ == "__main__":

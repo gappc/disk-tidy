@@ -1,8 +1,22 @@
-# Copy to ~/.config/docker-tidy/config.toml
-# Glob patterns (fnmatch) on volume names. Only volumes without a container are considered.
+# Copy to ~/.config/disk-tidy/config.toml. Every key is optional; missing keys use the defaults shown.
 
-# Named volumes that `docker-tidy clean` may remove: pure caches, safe to rebuild.
+[docker]
+# Named volumes without a container that `clean` may remove: pure caches, safe to rebuild (fnmatch globs).
 cache_volumes = ["*gobuild*", "*gomod*", "cmcache"]
-
-# Never removed, even if matched above. Default if unset: ["*db*", "*data*"]
+# Never removed, even if matched above.
 protect_volumes = ["*db*", "*data*"]
+
+[projects]
+# Searched for node_modules, target and .venv (only next to package.json, Cargo.toml/pom.xml,
+# pyproject.toml/requirements.txt/...).
+roots = ["~/projects"]
+# `clean` removes build dirs only in projects where nothing else changed for this many days.
+stale_days = 28
+
+[system]
+# journalctl --vacuum-size target.
+journal_max = "500M"
+
+[show]
+# Only displayed, never deleted.
+paths = ["~/snap/*/common"]
