@@ -71,6 +71,7 @@ fn snaps(runner: &mut dyn Runner) -> Category {
             size: file_size(&Path::new(SNAP_DIR).join(format!("{name}_{rev}.snap"))),
             id: format!("{name}={rev}"),
             label: format!("{name} (Revision {rev})"),
+            path: None,
         });
     }
     cat
@@ -102,6 +103,7 @@ fn journal(max: &str, runner: &mut dyn Runner) -> Category {
                 "systemd-Journal, belegt insgesamt {:.1} GB",
                 usage as f64 / 1e9
             ),
+            path: None,
         });
     }
     cat
@@ -122,6 +124,7 @@ fn apt_cache() -> Category {
             size: debs.iter().map(|d| file_size(Path::new(d))).sum(),
             id: "apt".into(),
             label: format!("{} heruntergeladene .deb-Pakete", debs.len()),
+            path: None,
         });
     }
     cat
@@ -145,6 +148,7 @@ fn crashes() -> Category {
             size: file_size(Path::new(&f)),
             id: f,
             label: name,
+            path: None,
         });
     }
     cat

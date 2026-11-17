@@ -184,6 +184,7 @@ mod tests {
                 size: 1000,
                 id: id.to_string(),
                 label: id.to_string(),
+                path: None,
             })
             .collect();
         c

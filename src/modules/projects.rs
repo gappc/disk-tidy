@@ -160,6 +160,7 @@ pub fn classify_dirs(
             size: sizes(&b),
             id: b.display().to_string(),
             label: format!("{label:72}  zuletzt geändert vor {days} Tagen"),
+            path: Some(b),
         };
         if last <= cutoff {
             &mut stale
@@ -193,7 +194,8 @@ pub fn collect(cfg: &ProjectsConfig, now: SystemTime) -> Vec<Category> {
 pub fn remove_build_dirs(items: &[Item]) -> bool {
     let mut ok = true;
     for i in items {
-        let p = Path::new(&i.id);
+        let target = i.target();
+        let p = target.as_path();
         let is_build_dir = fs::symlink_metadata(p).is_ok_and(|m| m.is_dir())
             && p.file_name()
                 .is_some_and(|n| markers(&n.to_string_lossy()).is_some());
@@ -332,6 +334,7 @@ mod tests {
             size: 0,
             id: docs.display().to_string(),
             label: "docs".into(),
+            path: None,
         };
         assert!(!remove_build_dirs(&[item]));
         assert!(docs.exists());
@@ -382,10 +385,48 @@ mod tests {
             size: 0,
             id: link.display().to_string(),
             label: String::new(),
+            path: None,
         };
         assert!(!remove_build_dirs(&[item]));
         assert!(r.join("fresh/target/debug/bin").exists());
         assert!(link.exists());
+    }
+
+    #[test]
+    fn build_dirs_with_spaces_and_non_ascii() {
+        let dir = tempfile::tempdir().unwrap();
+        let r = dir.path();
+        touch(&r.join("01 · Einstieg & Startscreen/package.json"), 60);
+        touch(&r.join("01 · Einstieg & Startscreen/node_modules/x.js"), 60);
+        let cfg = ProjectsConfig {
+            roots: vec![r.display().to_string()],
+            stale_days: 28,
+        };
+        let cats = collect(&cfg, SystemTime::now());
+        assert_eq!(
+            rel(&cats[0], r),
+            ["01 · Einstieg & Startscreen/node_modules"]
+        );
+        assert!(remove_build_dirs(&cats[0].items));
+        assert!(!r.join("01 · Einstieg & Startscreen/node_modules").exists());
+        assert!(r.join("01 · Einstieg & Startscreen/package.json").exists());
+    }
+
+    #[test]
+    fn build_dirs_under_non_utf8_project_are_removed() {
+        use std::os::unix::ffi::OsStrExt;
+        let dir = tempfile::tempdir().unwrap();
+        let project = dir.path().join(std::ffi::OsStr::from_bytes(b"caf\xe9"));
+        touch(&project.join("package.json"), 60);
+        touch(&project.join("node_modules/x.js"), 60);
+        let cfg = ProjectsConfig {
+            roots: vec![dir.path().display().to_string()],
+            stale_days: 28,
+        };
+        let cats = collect(&cfg, SystemTime::now());
+        assert_eq!(cats[0].items.len(), 1);
+        assert!(remove_build_dirs(&cats[0].items));
+        assert!(!project.join("node_modules").exists());
     }
 
     #[test]

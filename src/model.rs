@@ -25,6 +25,17 @@ pub struct Item {
     /// What the remover acts on: an ID, a name or a path.
     pub id: String,
     pub label: String,
+    /// The exact path for path-based removers; `id` is only its display form, which loses
+    /// bytes that are not UTF-8.
+    #[serde(skip)]
+    pub path: Option<PathBuf>,
+}
+
+impl Item {
+    /// Where a path-based remover acts: `path`, or `id` read as a path.
+    pub fn target(&self) -> PathBuf {
+        self.path.clone().unwrap_or_else(|| PathBuf::from(&self.id))
+    }
 }
 
 /// How the items of a category are removed.
@@ -124,6 +135,7 @@ mod tests {
             size,
             id: size.to_string(),
             label: String::new(),
+            path: None,
         }
     }
 

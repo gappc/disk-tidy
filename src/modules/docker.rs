@@ -81,7 +81,9 @@ fn run(argv: &[&str], with_ids: bool) -> Remover {
 
 fn matches(name: &str, patterns: &[String]) -> bool {
     let name: Vec<char> = name.chars().collect();
-    patterns.iter().any(|p| fnmatch(&name, &p.chars().collect::<Vec<_>>()))
+    patterns
+        .iter()
+        .any(|p| fnmatch(&name, &p.chars().collect::<Vec<_>>()))
 }
 
 /// Python's fnmatch on POSIX: `*`, `?`, `[seq]`, `[!seq]`; every string is a valid pattern
@@ -241,6 +243,7 @@ pub fn classify(df: &DockerDf, cfg: &DockerConfig, root: &Path) -> Vec<Category>
             size: parse_size(&c.size),
             id: c.id.clone(),
             label: format!("{:40}  {:35}  {}", c.names, c.image, c.status),
+            path: None,
         });
     }
 
@@ -275,6 +278,7 @@ pub fn classify(df: &DockerDf, cfg: &DockerConfig, root: &Path) -> Vec<Category>
             size: parse_size(&i.unique_size),
             id,
             label,
+            path: None,
         });
     }
 
@@ -288,11 +292,16 @@ pub fn classify(df: &DockerDf, cfg: &DockerConfig, root: &Path) -> Vec<Category>
                 b.last_used_since,
                 chars(&b.description, 0, 70)
             ),
+            path: None,
         });
     }
 
     for v in &df.volumes {
-        if v.links.trim().parse::<i64>().map_or(true, |links| links > 0) {
+        if v.links
+            .trim()
+            .parse::<i64>()
+            .map_or(true, |links| links > 0)
+        {
             continue; // in use, or a count that is not a number
         }
         let key = if is_anonymous(&v.name) {
@@ -308,6 +317,7 @@ pub fn classify(df: &DockerDf, cfg: &DockerConfig, root: &Path) -> Vec<Category>
             size: parse_size(&v.size),
             id: v.name.clone(),
             label: v.name.clone(),
+            path: None,
         });
     }
 
@@ -617,9 +627,16 @@ mod tests {
 
     #[test]
     fn protect_pattern_glob_crate_rejects_still_protects() {
-        let cfg = DockerConfig { cache_volumes: vec!["*cache*".into()], protect_volumes: vec!["**db**".into()] };
+        let cfg = DockerConfig {
+            cache_volumes: vec!["*cache*".into()],
+            protect_volumes: vec!["**db**".into()],
+        };
         let df = DockerDf {
-            volumes: vec![DfVolume { name: "pg_db_cache".into(), links: "0".into(), size: "1GB".into() }],
+            volumes: vec![DfVolume {
+                name: "pg_db_cache".into(),
+                links: "0".into(),
+                size: "1GB".into(),
+            }],
             ..Default::default()
         };
         let cats = classify(&df, &cfg, Path::new("/"));
@@ -629,7 +646,11 @@ mod tests {
     #[test]
     fn unparseable_counts_are_in_use() {
         let df = DockerDf {
-            volumes: vec![DfVolume { name: ANON.into(), links: "N/A".into(), size: "1GB".into() }],
+            volumes: vec![DfVolume {
+                name: ANON.into(),
+                links: "N/A".into(),
+                size: "1GB".into(),
+            }],
             images: vec![DfImage {
                 id: "sha256:1".into(),
                 repository: "<none>".into(),
@@ -641,7 +662,11 @@ mod tests {
             ..Default::default()
         };
         let cats = classify(&df, &DockerConfig::default(), Path::new("/"));
-        assert!(cats.iter().filter(|c| c.is_clean()).all(|c| c.items.is_empty()));
+        assert!(
+            cats.iter()
+                .filter(|c| c.is_clean())
+                .all(|c| c.items.is_empty())
+        );
     }
 
     #[test]

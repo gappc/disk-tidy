@@ -28,6 +28,7 @@ pub fn collect(base: &Path) -> Vec<Category> {
                 size: dir_size(&path),
                 id: path.display().to_string(),
                 label: e.file_name().to_string_lossy().into_owned(),
+                path: Some(path),
             });
         }
     }
@@ -39,7 +40,8 @@ pub fn remove_entries(items: &[Item], base: &Path) -> bool {
     let files = base.join("files");
     let mut ok = true;
     for i in items {
-        let p = Path::new(&i.id);
+        let target = i.target();
+        let p = target.as_path();
         // file_name() is None for a path ending in "..", which parent() would otherwise accept
         let (Some(name), true) = (p.file_name(), p.parent() == Some(files.as_path())) else {
             println!("  Übersprungen (nicht im Papierkorb): {}", p.display());
@@ -52,9 +54,9 @@ pub fn remove_entries(items: &[Item], base: &Path) -> bool {
         } else {
             fs::remove_file(p)
         };
-        let info = base
-            .join("info")
-            .join(format!("{}.trashinfo", name.to_string_lossy()));
+        let mut info_name = name.to_os_string();
+        info_name.push(".trashinfo");
+        let info = base.join("info").join(info_name);
         let removed = removed.and_then(|()| match fs::remove_file(&info) {
             Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
             _ => Ok(()),
@@ -131,6 +133,7 @@ mod tests {
             size: 0,
             id: outside.display().to_string(),
             label: String::new(),
+            path: None,
         };
         assert!(!remove_entries(&[item], dir.path()));
         assert!(outside.exists());
@@ -144,6 +147,7 @@ mod tests {
             size: 0,
             id: sneaky.display().to_string(),
             label: String::new(),
+            path: None,
         };
         assert!(!remove_entries(&[item], dir.path()));
         assert!(dir.path().join("files/a.txt").exists());
@@ -164,6 +168,25 @@ mod tests {
         let mut labels: Vec<&str> = cats[0].items.iter().map(|i| i.label.as_str()).collect();
         labels.sort();
         assert_eq!(labels, ["01 · Einstieg & Startscreen.png", "a b"]);
+        assert!(remove_entries(&cats[0].items, b));
+        assert!(names(&b.join("files")).is_empty());
+        assert!(names(&b.join("info")).is_empty());
+    }
+
+    #[test]
+    fn non_utf8_names_are_removed() {
+        use std::os::unix::ffi::OsStrExt;
+        let dir = tempfile::tempdir().unwrap();
+        let b = dir.path();
+        let name = std::ffi::OsStr::from_bytes(b"caf\xe9.txt");
+        touch(&b.join("files").join(name), b"x");
+        touch(
+            &b.join("info")
+                .join(std::ffi::OsStr::from_bytes(b"caf\xe9.txt.trashinfo")),
+            b"x",
+        );
+        let cats = collect(b);
+        assert_eq!(cats[0].items.len(), 1);
         assert!(remove_entries(&cats[0].items, b));
         assert!(names(&b.join("files")).is_empty());
         assert!(names(&b.join("info")).is_empty());

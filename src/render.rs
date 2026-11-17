@@ -233,6 +233,7 @@ mod tests {
             size,
             id: key.into(),
             label: format!("eintrag {key}"),
+            path: None,
         }];
         c
     }

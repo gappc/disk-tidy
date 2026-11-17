@@ -27,6 +27,7 @@ pub fn collect(cfg: &ShowConfig) -> Vec<Category> {
             size: dir_size(Path::new(p)),
             id: p.clone(),
             label: tilde(p),
+            path: None,
         })
         .collect();
     vec![cat.sorted()]
