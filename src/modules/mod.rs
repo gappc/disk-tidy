@@ -1,5 +1,6 @@
 //! The modules that find disk usage. Each returns categories; `collect_all` runs the selected ones.
 pub mod docker;
+pub mod projects;
 
 use crate::config::Config;
 use crate::model::Category;
@@ -17,6 +18,10 @@ pub fn collect_all(cfg: &Config, only: &[String], runner: &mut dyn Runner) -> Ve
         }
         let found = match name {
             "docker" => docker::collect(&cfg.docker, runner, "docker"),
+            "projects" => Ok(projects::collect(
+                &cfg.projects,
+                std::time::SystemTime::now(),
+            )),
             _ => Ok(Vec::new()), // registered by later modules
         };
         match found {
