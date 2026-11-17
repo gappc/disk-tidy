@@ -5,7 +5,7 @@ import re
 import shutil
 import subprocess
 
-from .core import Category, Item, parse_size, run
+from .core import CHECK, DATA, INFO, SAFE, Category, Item, parse_size, run
 
 NAME = "docker"
 ANON_VOLUME = re.compile(r"^[0-9a-f]{64}$")
@@ -21,27 +21,35 @@ def _rm(*prefix):
 
 def classify(df, cfg, root="/var/lib/docker"):
     """Sort `docker system df -v` output into categories. cfg is the [docker] section."""
-    def cat(key, title, clean=False, hint="", remove=None):
-        return Category(key, title, root, clean, hint, remove=remove)
+    def cat(key, title, safety, why, hint="", remove=None):
+        return Category(key, title, root, safety, why, hint, remove=remove)
 
     cats = {c.key: c for c in [
-        cat("dangling", "Docker: namenlose Images (dangling)", True,
+        cat("dangling", "Docker: namenlose Images", SAFE,
+            "Überbleibsel alter Builds, von nichts benutzt",
             remove=_rm("docker", "rmi")),
         # Cache entries cannot be removed reliably by ID; this removes exactly the
         # entries that are not in use, which is what the preview lists.
-        cat("build_cache", "Docker: Build-Cache, unbenutzt", True,
+        cat("build_cache", "Docker: Build-Cache", SAFE,
+            "nächster Build dauert einmal länger",
             remove=lambda items: run(["docker", "builder", "prune", "-a", "-f"])),
-        cat("anon_volumes", "Docker: anonyme Volumes ohne Container", True,
+        cat("anon_volumes", "Docker: anonyme Volumes ohne Container", SAFE,
+            "Reste gelöschter Container, keinem Projekt mehr zugeordnet",
             remove=_rm("docker", "volume", "rm")),
-        cat("cache_volumes", "Docker: Cache-Volumes laut Konfiguration", True,
+        cat("cache_volumes", "Docker: Cache-Volumes laut Konfiguration", SAFE,
+            "Caches, werden beim nächsten Build neu gefüllt",
             remove=_rm("docker", "volume", "rm")),
-        cat("containers", "Docker: gestoppte Container", hint="docker container prune"),
-        cat("unused_images", "Docker: unbenutzte Images mit Namen", hint="docker image prune -a"),
-        cat("stopped_images", "Docker: Images nur von gestoppten Containern benutzt",
-            hint="docker rm <container> && docker rmi <image>"),
-        cat("named_volumes", "Docker: benannte Volumes ohne Container  ⚠ evtl. Daten",
-            hint="docker volume rm <name>"),
-        cat("protected_volumes", "Docker: geschützte Volumes ohne Container (nie gelöscht)"),
+        cat("unused_images", "Docker: unbenutzte Images", CHECK,
+            "werden bei Bedarf neu heruntergeladen oder gebaut", "docker rmi <image>"),
+        cat("stopped_images", "Docker: Images gestoppter Container", CHECK,
+            "erst Container löschen; dann neu laden oder bauen",
+            "docker rm <container> && docker rmi <image>"),
+        cat("containers", "Docker: gestoppte Container", CHECK,
+            "Änderungen und Logs im Container gehen verloren", "docker rm <container>"),
+        cat("named_volumes", "Docker: benannte Volumes ohne Container", DATA,
+            "können Daten enthalten, z. B. Datenbanken", "docker volume rm <name>"),
+        cat("protected_volumes", "Docker: geschützte Volumes (Schutzliste)", INFO,
+            "passen auf protect_volumes, werden nie gelöscht"),
     ]}
 
     containers = df.get("Containers") or []

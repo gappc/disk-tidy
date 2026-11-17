@@ -72,18 +72,32 @@ class Item:
     label: str
 
 
+# Safety levels, from harmless to never touched. Only SAFE is removed by `disk-tidy clean`.
+SAFE = "safe"    # recoverable without loss: caches, leftovers, build output of idle projects
+CHECK = "check"  # recoverable, but costs time or downloads; you decide
+DATA = "data"    # may hold data that cannot be recovered
+INFO = "info"    # displayed only, never removed
+SAFETY_ORDER = [SAFE, CHECK, DATA, INFO]
+
+
 @dataclass
 class Category:
     key: str
     title: str
     path: str            # any path on the partition this category lives on
-    clean: bool = False  # removed by `disk-tidy clean`
+    safety: str = INFO
+    why: str = ""        # one line: what deleting it costs
     hint: str = ""       # manual command, shown for categories that clean skips
     items: list = field(default_factory=list)
     # Non-sudo removal: gets the items, returns True on success.
     remove: Callable[[list], bool] | None = None
     # Sudo removal: gets the items, returns the commands to run (without "sudo").
     sudo_cmds: Callable[[list], list] | None = None
+
+    @property
+    def clean(self):
+        """Removed by `disk-tidy clean`."""
+        return self.safety == SAFE
 
     @property
     def total(self):

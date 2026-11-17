@@ -2,7 +2,7 @@
 import shutil
 from pathlib import Path
 
-from .core import Category, Item, du
+from .core import SAFE, Category, Item, du
 
 NAME = "trash"
 
@@ -35,7 +35,8 @@ def _remove(items, base=None):
 def collect(cfg, base=None):
     base = base or trash_dir()
     files = base / "files"
-    cat = Category("trash", "Papierkorb", str(base), clean=True,
+    cat = Category("trash", "Papierkorb", str(base), SAFE,
+                   "schon gelöscht; danach endgültig weg",
                    remove=lambda items: _remove(items, base))
     if files.is_dir():
         entries = list(files.iterdir())

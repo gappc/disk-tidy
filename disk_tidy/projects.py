@@ -4,7 +4,7 @@ import shutil
 import time
 from pathlib import Path
 
-from .core import Category, Item, du
+from .core import CHECK, SAFE, Category, Item, du
 
 NAME = "projects"
 
@@ -87,10 +87,12 @@ def collect(cfg, now=None):
     pc = cfg["projects"]
     now = time.time() if now is None else now
     cutoff = now - pc["stale_days"] * 86400
-    stale = Category("build_stale", f"Build-Ordner, Projekt seit ≥{pc['stale_days']} Tagen unberührt",
-                     "~", clean=True, remove=_remove)
-    active = Category("build_active", "Build-Ordner in aktiven Projekten",
-                      "~", hint="rm -rf <ordner>")
+    stale = Category("build_stale", f"Build-Ordner, Projekt ≥{pc['stale_days']} Tage unberührt",
+                     "~", SAFE, "mit npm install / cargo build / uv sync wiederherstellbar",
+                     remove=_remove)
+    active = Category("build_active", "Build-Ordner in aktiven Projekten", "~", CHECK,
+                      "du arbeitest daran; danach neu installieren oder bauen",
+                      "rm -rf <ordner>  (oder cargo clean)")
 
     found = []
     for root in pc["roots"]:

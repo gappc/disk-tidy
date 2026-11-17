@@ -2,16 +2,24 @@
 
 Shows what fills the disk, per partition and sorted by size, and removes only the parts that are safe to lose.
 
-`disk-tidy preview` is read-only. Every category is marked `[clean]` (removed by `disk-tidy clean`) or
-`[manuell]` (only listed, with the command to remove it by hand).
+`disk-tidy preview` is read-only. Per partition it sorts every category into one of four levels and
+says in one line what deleting it costs:
+
+| Level | Meaning | Removed by `clean` |
+|---|---|---|
+| ✓ GEFAHRLOS | recoverable without loss: caches, leftovers, build output of idle projects | yes |
+| ⚠ PRÜFEN | recoverable, but costs time or downloads | no, by hand |
+| ✗ VORSICHT | may hold data that cannot be recovered | no, by hand |
+| ℹ NUR INFO | displayed only | never |
 
 ## Usage
 
 ```sh
-disk-tidy                          # same as: disk-tidy preview
-disk-tidy preview --top 0          # every entry, not just the top 15 per category
-disk-tidy preview --only docker    # modules: docker, projects, system, trash, show
-disk-tidy clean                    # remove all [clean] categories, after asking
+disk-tidy                          # overview: one line per category, grouped by level
+disk-tidy --details                # plus the entries (top 15) and the command to remove by hand
+disk-tidy --details --top 0        # every entry
+disk-tidy --only docker            # modules: docker, projects, system, trash, show
+disk-tidy clean                    # remove everything marked GEFAHRLOS, after asking
 disk-tidy clean --only trash --yes
 ```
 
@@ -27,7 +35,7 @@ disk-tidy clean --only trash --yes
 
 Details:
 
-- Docker images, containers and volumes are removed by the IDs shown in the preview, so nothing that
+- Docker images and volumes are removed by the IDs shown in the preview, so nothing that
   appeared in between is touched. Build cache is the exception: `docker builder prune -a -f`.
 - A build dir only counts next to its project file (`target` next to `Cargo.toml` or `pom.xml`, ...).
   A project is the nearest git repo above the build dir; "untouched" means no file outside build dirs

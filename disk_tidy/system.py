@@ -5,7 +5,7 @@ import re
 import shutil
 import subprocess
 
-from .core import Category, Item, parse_size
+from .core import SAFE, Category, Item, parse_size
 
 NAME = "system"
 SNAP_DIR = "/var/lib/snapd/snaps"
@@ -42,7 +42,8 @@ def _output(cmd):
 
 
 def snaps():
-    cat = Category("snap_revisions", "System: alte Snap-Revisionen", SNAP_DIR, clean=True,
+    cat = Category("snap_revisions", "System: alte Snap-Revisionen (sudo)", SNAP_DIR, SAFE,
+                   "ältere Versionen, die Snap nur als Rückfall aufhebt",
                    sudo_cmds=lambda items: [["snap", "remove", n, f"--revision={r}"]
                                             for n, r in (i.ref.split("=") for i in items)])
     if shutil.which("snap"):
@@ -53,7 +54,8 @@ def snaps():
 
 
 def journal(max_size):
-    cat = Category("journal", f"System: Journal über {max_size}", "/var/log/journal", clean=True,
+    cat = Category("journal", f"System: Journal über {max_size} (sudo)", "/var/log/journal", SAFE,
+                   f"alte System-Logs; die neuesten {max_size} bleiben",
                    sudo_cmds=lambda items: [["journalctl", f"--vacuum-size={max_size}"]])
     usage = parse_journal_usage(_output(["journalctl", "--disk-usage"]))
     excess = usage - parse_size(max_size)
@@ -64,7 +66,8 @@ def journal(max_size):
 
 
 def apt_cache():
-    cat = Category("apt_cache", "System: apt-Paketcache", "/var/cache/apt", clean=True,
+    cat = Category("apt_cache", "System: apt-Paketcache (sudo)", "/var/cache/apt", SAFE,
+                   "bereits installierte .deb-Pakete, werden bei Bedarf neu geladen",
                    sudo_cmds=lambda items: [["apt-get", "clean"]])
     debs = glob.glob("/var/cache/apt/archives/*.deb")
     if debs:
@@ -74,7 +77,8 @@ def apt_cache():
 
 
 def crashes():
-    cat = Category("crash", "System: Absturzberichte in /var/crash", "/var/crash", clean=True,
+    cat = Category("crash", "System: Absturzberichte (sudo)", "/var/crash", SAFE,
+                   "alte Berichte abgestürzter Programme",
                    sudo_cmds=lambda items: [["rm", "-f", "--", *[i.ref for i in items]]])
     for f in glob.glob("/var/crash/*.crash"):
         cat.items.append(Item(_file_size(f), f, os.path.basename(f)))
