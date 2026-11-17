@@ -1,10 +1,26 @@
 //! The modules that find disk usage. Each returns categories; `collect_all` runs the selected ones.
 pub mod docker;
 pub mod projects;
+pub mod show;
+pub mod system;
+pub mod trash;
 
 use crate::config::Config;
 use crate::model::Category;
 use crate::runner::Runner;
+
+/// Paths matching a glob, in Python's sorted order; `*` does not match a leading dot.
+pub fn glob_sorted(pattern: &str) -> Vec<String> {
+    let opts = glob::MatchOptions {
+        require_literal_leading_dot: true,
+        ..Default::default()
+    };
+    let mut v: Vec<String> = glob::glob_with(pattern, opts)
+        .map(|paths| paths.flatten().map(|p| p.display().to_string()).collect())
+        .unwrap_or_default();
+    v.sort();
+    v
+}
 
 pub const MODULES: [&str; 5] = ["docker", "projects", "system", "trash", "show"];
 
@@ -22,7 +38,10 @@ pub fn collect_all(cfg: &Config, only: &[String], runner: &mut dyn Runner) -> Ve
                 &cfg.projects,
                 std::time::SystemTime::now(),
             )),
-            _ => Ok(Vec::new()), // registered by later modules
+            "system" => Ok(system::collect(&cfg.system, runner)),
+            "trash" => Ok(trash::collect(&trash::trash_dir())),
+            "show" => Ok(show::collect(&cfg.show)),
+            _ => unreachable!("MODULES lists every module"),
         };
         match found {
             Ok(found) => cats.extend(found.into_iter().filter(|c| !c.items.is_empty())),
