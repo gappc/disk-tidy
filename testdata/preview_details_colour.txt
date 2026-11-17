@@ -1,0 +1,37 @@
+[1m
+/  ·  100.0 GB frei von 1.0 TB (90% belegt)[0m
+[32;1m
+  ✓ GEFAHRLOS – löscht `disk-tidy clean`[0m[32m   5.9 GB[0m
+        3.4 GB  Docker: Cache-Volumes laut Konfiguration      [2mCaches, werden beim nächsten Build neu gefüllt[0m
+                   3.4 GB  audit-gobuild
+        1.7 GB  Docker: Build-Cache                           [2mnächster Build dauert einmal länger[0m
+                   1.5 GB  1 week ago       RUN x
+               ... und 1 weitere
+      500.0 MB  Docker: anonyme Volumes ohne Container        [2mReste gelöschter Container, keinem Projekt mehr zugeordnet[0m
+                 500.0 MB  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      300.0 MB  Docker: namenlose Images                      [2mÜberbleibsel alter Builds, von nichts benutzt[0m
+                 300.0 MB  111111111111                                                  1 day ago
+[33;1m
+  ⚠ PRÜFEN – wiederherstellbar, kostet aber Zeit oder Downloads; nur von Hand[0m[33m   3.7 GB[0m
+        2.0 GB  Docker: gestoppte Container                   [2mÄnderungen und Logs im Container gehen verloren[0m
+[2m               Befehl: docker rm <container>[0m
+                   2.0 GB  old                                       old:1                                Exited (0)
+        1.6 GB  Docker: unbenutzte Images                     [2mwerden bei Bedarf neu heruntergeladen oder gebaut[0m
+[2m               Befehl: docker rmi <image>[0m
+                   1.6 GB  node:22                                                       1 day ago
+      100.0 MB  Docker: Images gestoppter Container           [2merst Container löschen; dann neu laden oder bauen[0m
+[2m               Befehl: docker rm <container> && docker rmi <image>[0m
+                 100.0 MB  old:1                                                         1 day ago
+[31;1m
+  ✗ VORSICHT – kann Daten enthalten; nur von Hand[0m[31m   1.0 GB[0m
+        1.0 GB  Docker: benannte Volumes ohne Container       [2mkönnen Daten enthalten, z. B. Datenbanken[0m
+[2m               Befehl: docker volume rm <name>[0m
+                   1.0 GB  random-named
+[2;1m
+  ℹ NUR INFO – wird nie gelöscht[0m[2m   2.0 GB[0m
+        2.0 GB  Docker: geschützte Volumes (Schutzliste)      [2mpassen auf protect_volumes, werden nie gelöscht[0m
+                   1.0 GB  proj_dbdata
+               ... und 1 weitere
+
+[32;1mGefahrlos freizugeben: / 5.9 GB  →  disk-tidy clean[0m
+[2mDocker-Images: nur der eigene Anteil (UniqueSize) zählt; geteilte Layer und geteilter Build-Cache werden erst frei, wenn alle Nutzer weg sind.[0m

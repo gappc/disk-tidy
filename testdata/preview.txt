@@ -1,0 +1,22 @@
+
+/  ·  100.0 GB frei von 1.0 TB (90% belegt)
+
+  ✓ GEFAHRLOS – löscht `disk-tidy clean`   5.9 GB
+        3.4 GB  Docker: Cache-Volumes laut Konfiguration      Caches, werden beim nächsten Build neu gefüllt
+        1.7 GB  Docker: Build-Cache                           nächster Build dauert einmal länger
+      500.0 MB  Docker: anonyme Volumes ohne Container        Reste gelöschter Container, keinem Projekt mehr zugeordnet
+      300.0 MB  Docker: namenlose Images                      Überbleibsel alter Builds, von nichts benutzt
+
+  ⚠ PRÜFEN – wiederherstellbar, kostet aber Zeit oder Downloads; nur von Hand   3.7 GB
+        2.0 GB  Docker: gestoppte Container                   Änderungen und Logs im Container gehen verloren
+        1.6 GB  Docker: unbenutzte Images                     werden bei Bedarf neu heruntergeladen oder gebaut
+      100.0 MB  Docker: Images gestoppter Container           erst Container löschen; dann neu laden oder bauen
+
+  ✗ VORSICHT – kann Daten enthalten; nur von Hand   1.0 GB
+        1.0 GB  Docker: benannte Volumes ohne Container       können Daten enthalten, z. B. Datenbanken
+
+  ℹ NUR INFO – wird nie gelöscht   2.0 GB
+        2.0 GB  Docker: geschützte Volumes (Schutzliste)      passen auf protect_volumes, werden nie gelöscht
+
+Gefahrlos freizugeben: / 5.9 GB  →  disk-tidy clean
+Einzelne Einträge und Befehle zum Löschen von Hand: disk-tidy --details

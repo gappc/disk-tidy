@@ -1,0 +1,37 @@
+
+/  ·  100.0 GB frei von 1.0 TB (90% belegt)
+
+  ✓ GEFAHRLOS – löscht `disk-tidy clean`   5.9 GB
+        3.4 GB  Docker: Cache-Volumes laut Konfiguration      Caches, werden beim nächsten Build neu gefüllt
+                   3.4 GB  audit-gobuild
+        1.7 GB  Docker: Build-Cache                           nächster Build dauert einmal länger
+                   1.5 GB  1 week ago       RUN x
+               ... und 1 weitere
+      500.0 MB  Docker: anonyme Volumes ohne Container        Reste gelöschter Container, keinem Projekt mehr zugeordnet
+                 500.0 MB  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      300.0 MB  Docker: namenlose Images                      Überbleibsel alter Builds, von nichts benutzt
+                 300.0 MB  111111111111                                                  1 day ago
+
+  ⚠ PRÜFEN – wiederherstellbar, kostet aber Zeit oder Downloads; nur von Hand   3.7 GB
+        2.0 GB  Docker: gestoppte Container                   Änderungen und Logs im Container gehen verloren
+               Befehl: docker rm <container>
+                   2.0 GB  old                                       old:1                                Exited (0)
+        1.6 GB  Docker: unbenutzte Images                     werden bei Bedarf neu heruntergeladen oder gebaut
+               Befehl: docker rmi <image>
+                   1.6 GB  node:22                                                       1 day ago
+      100.0 MB  Docker: Images gestoppter Container           erst Container löschen; dann neu laden oder bauen
+               Befehl: docker rm <container> && docker rmi <image>
+                 100.0 MB  old:1                                                         1 day ago
+
+  ✗ VORSICHT – kann Daten enthalten; nur von Hand   1.0 GB
+        1.0 GB  Docker: benannte Volumes ohne Container       können Daten enthalten, z. B. Datenbanken
+               Befehl: docker volume rm <name>
+                   1.0 GB  random-named
+
+  ℹ NUR INFO – wird nie gelöscht   2.0 GB
+        2.0 GB  Docker: geschützte Volumes (Schutzliste)      passen auf protect_volumes, werden nie gelöscht
+                   1.0 GB  proj_dbdata
+               ... und 1 weitere
+
+Gefahrlos freizugeben: / 5.9 GB  →  disk-tidy clean
+Docker-Images: nur der eigene Anteil (UniqueSize) zählt; geteilte Layer und geteilter Build-Cache werden erst frei, wenn alle Nutzer weg sind.

@@ -1,0 +1,15 @@
+
+/  ·  100.0 GB frei von 1.0 TB (90% belegt)
+
+  ✓ GEFAHRLOS – löscht `disk-tidy clean`   5.9 GB
+        3.4 GB  Docker: Cache-Volumes laut Konfiguration      Caches, werden beim nächsten Build neu gefüllt
+                   3.4 GB  audit-gobuild
+        1.7 GB  Docker: Build-Cache                           nächster Build dauert einmal länger
+                   1.5 GB  1 week ago       RUN x
+               ... und 1 weitere
+      500.0 MB  Docker: anonyme Volumes ohne Container        Reste gelöschter Container, keinem Projekt mehr zugeordnet
+                 500.0 MB  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      300.0 MB  Docker: namenlose Images                      Überbleibsel alter Builds, von nichts benutzt
+                 300.0 MB  111111111111                                                  1 day ago
+
+Insgesamt etwa 5.9 GB. Nur die Kategorien oben werden gelöscht.
