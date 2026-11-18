@@ -205,27 +205,53 @@ pub fn clean(
     err: &mut dyn Write,
 ) -> Report {
     // Output errors (a closed pipe) must not stop or skip the removal once confirmed.
-    let Selection { todo, .. } = sel;
+    let Selection {
+        todo,
+        partial,
+        dropped,
+    } = sel;
+    let incomplete = !partial.is_empty() || !dropped.is_empty();
+    let mut report = Report::new(Outcome::Done);
+    report.dropped = dropped;
+    report.categories = partial
+        .iter()
+        .map(|c| CatResult {
+            key: c.key.clone(),
+            status: Status::SkippedPartial,
+            items: items_of(c),
+        })
+        .collect();
+    let finish = |mut report: Report, outcome: Outcome| {
+        report.outcome = outcome;
+        report.exit_code = outcome.exit_code();
+        report
+    };
     if todo.is_empty() {
         let _ = writeln!(out, "Nichts Sicheres zu löschen.");
-        return Report::new(Outcome::Nothing);
+        plan_notes(out, &partial, &report.dropped);
+        let outcome = if incomplete {
+            Outcome::DonePartial
+        } else {
+            Outcome::Nothing
+        };
+        return finish(report, outcome);
     }
     let summary = render_clean_summary(&todo, opts.details, opts.top, &opts.style, opts.usage);
     let _ = write!(out, "{summary}");
+    plan_notes(out, &partial, &report.dropped);
     if !opts.assume_yes {
         if !opts.can_prompt {
             let _ = writeln!(err, "Keine Rückfrage möglich: --yes oder --plan angeben.");
-            return Report::new(Outcome::Aborted);
+            return finish(report, Outcome::Aborted);
         }
         let _ = write!(out, "Löschen? [j/N] ");
         let _ = out.flush();
         if !confirm(input) {
             let _ = writeln!(out, "Abgebrochen, nichts gelöscht.");
-            return Report::new(Outcome::Aborted);
+            return finish(report, Outcome::Aborted);
         }
     }
 
-    let mut report = Report::new(Outcome::Done);
     let mut sudo_ok = None;
     for c in &todo {
         let _ = writeln!(out, "→ {}", c.title);
@@ -284,15 +310,34 @@ pub fn clean(
             "Fertig."
         }
     );
-    report.outcome = if errors {
+    let outcome = if errors {
         Outcome::DoneWithErrors
     } else if !report.skipped_sudo.is_empty() {
         Outcome::DoneSkippedSudo
+    } else if incomplete {
+        Outcome::DonePartial
     } else {
         Outcome::Done
     };
-    report.exit_code = report.outcome.exit_code();
-    report
+    finish(report, outcome)
+}
+
+/// What of a plan is not carried out, one line each.
+fn plan_notes(out: &mut dyn Write, partial: &[Category], dropped: &[Dropped]) {
+    if !dropped.is_empty() {
+        let _ = writeln!(
+            out,
+            "Aus dem Plan nicht mehr gültig: {} Einträge (verschwunden, nicht mehr gefahrlos oder Modul ausgefallen).",
+            dropped.len()
+        );
+    }
+    for c in partial {
+        let _ = writeln!(
+            out,
+            "Übersprungen, der Plan enthält nicht alle Einträge: {}",
+            c.title
+        );
+    }
 }
 
 #[cfg(test)]
@@ -639,5 +684,80 @@ mod tests {
             &mut FakeRunner::default(),
         );
         assert!(text.contains("Insgesamt etwa 2.0 kB. Nur die Kategorien oben werden gelöscht; einzelne Einträge: disk-tidy clean --details.\nLöschen? [j/N] "), "{text}");
+    }
+
+    fn one_dropped() -> Vec<Dropped> {
+        vec![Dropped {
+            key: "trash".into(),
+            id: "/t/x".into(),
+            reason: Reason::Gone,
+        }]
+    }
+
+    #[test]
+    fn partial_gives_exit_5() {
+        let mut r = FakeRunner::default();
+        let sel = Selection {
+            todo: vec![dangling()],
+            dropped: one_dropped(),
+            ..Default::default()
+        };
+        let (report, out, _) = do_clean_full(sel, &opts(true), "", &mut r);
+        assert_eq!(report.outcome, Outcome::DonePartial);
+        assert_eq!(report.exit_code, 5);
+        assert_eq!(r.calls, [strings(&["docker", "rmi", "a", "b"])]);
+        assert_eq!(report.dropped, one_dropped());
+        assert!(out.contains("Aus dem Plan nicht mehr gültig: 1 Einträge (verschwunden, nicht mehr gefahrlos oder Modul ausgefallen).\n"), "{out}");
+    }
+
+    #[test]
+    fn partial_category_is_reported_not_run() {
+        let mut r = FakeRunner::default();
+        let cache = cat(
+            "build_cache",
+            Safety::Safe,
+            run(&["docker", "builder", "prune", "-a", "-f"], false, false),
+            &["c1"],
+        );
+        let sel = Selection {
+            partial: vec![cache],
+            ..Default::default()
+        };
+        let (report, out, _) = do_clean_full(sel, &opts(true), "", &mut r);
+        assert!(r.calls.is_empty());
+        assert_eq!(report.outcome, Outcome::DonePartial);
+        assert_eq!(report.categories[0].status, Status::SkippedPartial);
+        assert_eq!(report.freed, 0);
+        assert_eq!(
+            out,
+            "Nichts Sicheres zu löschen.\nÜbersprungen, der Plan enthält nicht alle Einträge: Titel build_cache\n"
+        );
+    }
+
+    #[test]
+    fn all_dropped_gives_exit_5() {
+        let mut r = FakeRunner::default();
+        let sel = Selection {
+            dropped: one_dropped(),
+            ..Default::default()
+        };
+        let (report, _, _) = do_clean_full(sel, &opts(true), "", &mut r);
+        assert_eq!(report.outcome, Outcome::DonePartial);
+        assert!(r.calls.is_empty());
+    }
+
+    #[test]
+    fn errors_beat_partial() {
+        let mut r = FakeRunner::default();
+        r.fail.insert("docker rmi a b".into());
+        let sel = Selection {
+            todo: vec![dangling()],
+            dropped: one_dropped(),
+            ..Default::default()
+        };
+        assert_eq!(
+            do_clean_full(sel, &opts(true), "", &mut r).0.outcome,
+            Outcome::DoneWithErrors
+        );
     }
 }
