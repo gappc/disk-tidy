@@ -125,8 +125,11 @@ pub fn select(plan: &Plan, scan: &Scan) -> Selection {
     let mut sel = Selection::default();
     for c in scan.cats.iter().filter(|c| c.is_clean()) {
         let mut kept = c.clone();
-        kept.items
-            .retain(|i| listed.contains(&(c.key.as_str(), i.id.as_str())));
+        // A non-UTF-8 path is never in a plan; its lossy id could match a real name.
+        kept.items.retain(|i| {
+            i.path.as_ref().is_none_or(|p| p.to_str().is_some())
+                && listed.contains(&(c.key.as_str(), i.id.as_str()))
+        });
         if kept.items.is_empty() {
             continue;
         }
@@ -423,5 +426,18 @@ mod tests {
         ]);
         let sel = select(&plan, &scan(Vec::new()));
         assert!(sel.todo.is_empty() && sel.partial.is_empty() && sel.dropped.is_empty());
+    }
+
+    #[test]
+    fn non_utf8_twin_is_not_removed() {
+        let plain = item("/t/a\u{fffd}", 1); // a real name with U+FFFD: in the plan
+        let mut twin = item("/t/a\u{fffd}", 1); // b"/t/a\xff": same display id, left out
+        twin.path = Some(PathBuf::from(OsString::from_vec(b"/t/a\xff".to_vec())));
+        let now = scan(vec![cat("trash", Safety::Safe, vec![plain.clone(), twin])]);
+        let plan = plan_of(vec![cat("trash", Safety::Safe, vec![plain])]);
+        let sel = select(&plan, &now);
+        assert_eq!(sel.todo.len(), 1);
+        assert_eq!(sel.todo[0].items.len(), 1);
+        assert!(sel.todo[0].items[0].path.is_none());
     }
 }
