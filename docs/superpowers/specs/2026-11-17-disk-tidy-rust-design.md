@@ -14,7 +14,8 @@ own selection model.
 ## Phases (one plan each)
 
 1. **Port** the current Python tool to Rust with identical behaviour and output. Remove `python/`.
-2. **Automation**: `plan --json` / `clean --plan FILE`, no prompt without a TTY, documented exit codes.
+2. **Automation**: `plan` / `clean --plan FILE`, no prompt without a TTY, documented exit codes.
+   Designed in `2026-11-18-disk-tidy-automation-design.md`.
 3. **TUI**: `disk-tidy tui` (or interactive default on a TTY, decided in phase 3).
 
 Phase 2 and 3 get their own plans once phase 1 is done.
@@ -40,7 +41,7 @@ Phase 2 and 3 get their own plans once phase 1 is done.
   Docker images and volumes are removed by the listed IDs; build cache via
   `docker builder prune -a -f`. Build dirs and trash entries are re-checked before deletion.
   Sudo commands run via `sudo` when passwordless sudo works or stdin is a terminal; otherwise they
-  are printed at the end. Exit 0 = done, 1 = aborted, 2 = done with errors.
+  are printed at the end. Exit 0 = done, 1 = aborted, 2 = done with errors (phase 2 moves this to 3).
 - Docker, snap, journalctl and apt are called as external commands (no Docker API crate).
 
 ## Non-goals for phase 1

@@ -6,7 +6,7 @@ pub trait Runner {
     fn output(&mut self, argv: &[&str]) -> Option<String>;
     /// Success. On failure prints "  Fehler: <first 4 args>...: <stderr>" to stderr.
     fn run(&mut self, argv: &[String]) -> bool;
-    /// `sudo` + argv; a password prompt goes to the terminal.
+    /// `sudo` + argv; a password prompt goes to the terminal, the command's output to stderr.
     fn run_sudo(&mut self, argv: &[String]) -> bool;
     /// sudo works without a password, or there is a terminal to type one.
     fn can_sudo(&mut self, interactive: bool) -> bool;
@@ -43,8 +43,10 @@ impl Runner for SystemRunner {
     }
 
     fn run_sudo(&mut self, argv: &[String]) -> bool {
+        // Its output goes to stderr, so stdout stays clean for --json.
         Command::new("sudo")
             .args(argv)
+            .stdout(std::io::stderr())
             .status()
             .is_ok_and(|s| s.success())
     }

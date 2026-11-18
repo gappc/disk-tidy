@@ -21,6 +21,8 @@ disk-tidy --details --top 0        # every entry
 disk-tidy --only docker            # modules: docker, projects, system, trash, show
 disk-tidy clean                    # remove everything marked GEFAHRLOS, after asking
 disk-tidy clean --only trash --yes
+disk-tidy plan > plan.json         # everything found, as JSON (for scripts and agents)
+disk-tidy clean --plan plan.json   # remove what the plan lists and is still GEFAHRLOS
 ```
 
 ## What `clean` removes
@@ -41,7 +43,75 @@ Details:
   A project is the nearest git repo above the build dir; "untouched" means no file outside build dirs
   and `.git` changed, so a monorepo with recent edits keeps all its `node_modules`.
 - System commands run with `sudo`. Without a terminal and without passwordless sudo they are skipped
-  and printed at the end instead.
+  and printed at the end instead (exit 4).
+
+## Automation
+
+For scripts and agents. `clean` never asks without a terminal: without `--yes` or `--plan` it removes
+nothing and exits 1.
+
+```sh
+disk-tidy plan [--only MOD,...] > plan.json     # read, narrow down (delete items or categories)
+disk-tidy clean --plan plan.json [--json]       # or --plan - to read it from stdin
+disk-tidy clean --yes --json                    # everything GEFAHRLOS, report as JSON
+```
+
+`clean --plan` scans the plan's modules again with the current config and removes an entry only if
+the plan lists it **and** the fresh scan still finds it in a GEFAHRLOS category. A plan can only
+narrow what `clean` would remove: editing `safety` or adding entries has no effect. Categories whose
+remover takes no IDs (Docker build cache, apt cache, journal) are removed only if the plan lists
+every entry the fresh scan finds; otherwise they are skipped. Entries whose path is not valid UTF-8
+are left out of the plan (named on stderr) and can only be removed interactively.
+
+Plan (`version` 1; all levels, in preview order):
+
+```json
+{
+  "version": 1,
+  "created": 1763459200,
+  "modules": ["trash"],
+  "partitions": [{"mount": "/home", "total": 500000000000, "used": 400000000000, "free": 100000000000}],
+  "categories": [
+    {"key": "trash", "module": "trash", "title": "Papierkorb", "safety": "safe",
+     "why": "schon gelöscht; danach endgültig weg", "hint": "", "mount": "/home", "total": 12288,
+     "items": [{"id": "/home/u/.local/share/Trash/files/x", "label": "x", "size": 12288}]}
+  ]
+}
+```
+
+Report of `clean --json` (stdout holds only this object; all text goes to stderr):
+
+```json
+{
+  "version": 1,
+  "outcome": "done_partial",
+  "exit_code": 5,
+  "freed": 12288,
+  "categories": [{"key": "trash", "status": "removed", "items": [{"id": "/home/u/.local/share/Trash/files/x", "size": 12288}]}],
+  "dropped": [{"key": "build_stale", "id": "/home/u/p/target", "reason": "not_safe"}],
+  "skipped_sudo": []
+}
+```
+
+- `status`: `removed`, `failed`, `skipped_sudo`, `skipped_partial` (plan held only part of a
+  category without IDs).
+- `dropped`: entries the plan marked `safe` that were not removed: `gone`, `not_safe` (now in another
+  level, e.g. the project became active), `module_failed` (e.g. Docker not reachable).
+- `outcome`: `done`, `nothing`, `aborted`, `done_with_errors`, `done_skipped_sudo`, `done_partial`,
+  `error` (then with `"error": "<message>"`; plan file or config errors).
+
+### Exit codes
+
+| Code | Meaning |
+|---|---|
+| 0 | done, or nothing to remove |
+| 1 | aborted: answered no, or no confirmation possible |
+| 2 | usage, config or plan file error |
+| 3 | done, but some removals failed |
+| 4 | done, but sudo commands were skipped |
+| 5 | done, but not everything in the plan was carried out (`clean --plan` only) |
+
+If several apply, the lower of 3, 4, 5 wins.
 
 ## Install
 
