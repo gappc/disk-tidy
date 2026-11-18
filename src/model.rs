@@ -133,7 +133,13 @@ impl Category {
 
     /// The remover takes no IDs, so the category is removed as a whole or not at all.
     pub fn all_or_nothing(&self) -> bool {
-        matches!(self.remover, Remover::Run { with_ids: false, .. })
+        matches!(
+            self.remover,
+            Remover::Run {
+                with_ids: false,
+                ..
+            }
+        )
     }
 
     /// Items by size, largest first.

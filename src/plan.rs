@@ -166,11 +166,17 @@ pub fn select(plan: &Plan, scan: &Scan, levels: &[Safety]) -> Selection {
         .iter()
         .flat_map(|c| {
             let ok = eligible(c);
-            c.items.iter().map(move |i| (c.key.as_str(), i.id.as_str(), ok))
+            c.items
+                .iter()
+                .map(move |i| (c.key.as_str(), i.id.as_str(), ok))
         })
         .collect();
     let mut dropped = Vec::new();
-    for c in plan.categories.iter().filter(|c| levels.contains(&c.safety)) {
+    for c in plan
+        .categories
+        .iter()
+        .filter(|c| levels.contains(&c.safety))
+    {
         for i in &c.items {
             if taken.contains(&(c.key.as_str(), i.id.as_str())) {
                 continue;
@@ -460,9 +466,8 @@ mod tests {
 
     #[test]
     fn check_level_allowed_for_tui() {
-        let active = || {
-            cat("build_active", Safety::Check, vec![item("x", 1)]).remover(Remover::BuildDirs)
-        };
+        let active =
+            || cat("build_active", Safety::Check, vec![item("x", 1)]).remover(Remover::BuildDirs);
         let plan = plan_of(vec![active()]);
         let sel = select(&plan, &scan(vec![active()]), TUI);
         assert_eq!(ids(&sel.todo), [("build_active", vec!["x"])]);
@@ -488,7 +493,10 @@ mod tests {
         let plan = plan_of(vec![stopped()]);
         let sel = select(&plan, &scan(vec![stopped()]), TUI);
         assert!(sel.todo.is_empty());
-        assert_eq!(sel.dropped, [dropped("stopped_images", "y", Reason::NotSafe)]);
+        assert_eq!(
+            sel.dropped,
+            [dropped("stopped_images", "y", Reason::NotSafe)]
+        );
     }
 
     #[test]
@@ -498,6 +506,9 @@ mod tests {
         let plan = parse_plan(text).unwrap();
         assert_eq!(plan.categories[0].items[0].id, "/t/x");
         let now = scan(vec![cat("trash", Safety::Safe, vec![item("/t/x", 1)])]);
-        assert_eq!(ids(&select(&plan, &now, SAFE).todo), [("trash", vec!["/t/x"])]);
+        assert_eq!(
+            ids(&select(&plan, &now, SAFE).todo),
+            [("trash", vec!["/t/x"])]
+        );
     }
 }

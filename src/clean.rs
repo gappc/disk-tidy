@@ -194,6 +194,27 @@ fn items_of(c: &Category) -> Vec<ReportItem> {
         .collect()
 }
 
+/// The base report of a selection: partial categories as skipped, dropped plan entries.
+fn report_of_sel(partial: &[Category], dropped: Vec<Dropped>) -> Report {
+    let mut report = Report::new(Outcome::Done);
+    report.dropped = dropped;
+    report.categories = partial
+        .iter()
+        .map(|c| CatResult {
+            key: c.key.clone(),
+            status: Status::SkippedPartial,
+            items: items_of(c),
+        })
+        .collect();
+    report
+}
+
+fn finish(mut report: Report, outcome: Outcome) -> Report {
+    report.outcome = outcome;
+    report.exit_code = outcome.exit_code();
+    report
+}
+
 /// Shows the summary, asks (unless `assume_yes`), removes `sel.todo` and reports. Text goes to
 /// `out`; only the "cannot ask" message goes to `err`.
 pub fn clean(
@@ -205,57 +226,63 @@ pub fn clean(
     err: &mut dyn Write,
 ) -> Report {
     // Output errors (a closed pipe) must not stop or skip the removal once confirmed.
+    if sel.todo.is_empty() {
+        let _ = writeln!(out, "Nichts Sicheres zu löschen.");
+        plan_notes(out, &sel.partial, &sel.dropped);
+        let outcome = if sel.partial.is_empty() && sel.dropped.is_empty() {
+            Outcome::Nothing
+        } else {
+            Outcome::DonePartial
+        };
+        return finish(report_of_sel(&sel.partial, sel.dropped), outcome);
+    }
+    let summary = render_clean_summary(&sel.todo, opts.details, opts.top, &opts.style, opts.usage);
+    let _ = write!(out, "{summary}");
+    plan_notes(out, &sel.partial, &sel.dropped);
+    if !opts.assume_yes {
+        let aborted =
+            |sel: Selection| finish(report_of_sel(&sel.partial, sel.dropped), Outcome::Aborted);
+        if !opts.can_prompt {
+            let _ = writeln!(err, "Keine Rückfrage möglich: --yes oder --plan angeben.");
+            return aborted(sel);
+        }
+        let _ = write!(out, "Löschen? [j/N] ");
+        let _ = out.flush();
+        if !confirm(input) {
+            let _ = writeln!(out, "Abgebrochen, nichts gelöscht.");
+            return aborted(sel);
+        }
+    }
+    execute(sel, opts.interactive, runner, out, &mut |_| {})
+}
+
+/// One step of `execute`, for a progress display.
+pub enum Progress<'a> {
+    Started(&'a Category),
+    Done(&'a CatResult),
+}
+
+/// Removes `sel.todo` category by category and reports; what `clean` does once confirmed.
+/// `interactive`: sudo may ask for a password. Remover messages and the closing lines go to `out`.
+pub fn execute(
+    sel: Selection,
+    interactive: bool,
+    runner: &mut dyn Runner,
+    out: &mut dyn Write,
+    progress: &mut dyn FnMut(Progress),
+) -> Report {
     let Selection {
         todo,
         partial,
         dropped,
     } = sel;
     let incomplete = !partial.is_empty() || !dropped.is_empty();
-    let mut report = Report::new(Outcome::Done);
-    report.dropped = dropped;
-    report.categories = partial
-        .iter()
-        .map(|c| CatResult {
-            key: c.key.clone(),
-            status: Status::SkippedPartial,
-            items: items_of(c),
-        })
-        .collect();
-    let finish = |mut report: Report, outcome: Outcome| {
-        report.outcome = outcome;
-        report.exit_code = outcome.exit_code();
-        report
-    };
-    if todo.is_empty() {
-        let _ = writeln!(out, "Nichts Sicheres zu löschen.");
-        plan_notes(out, &partial, &report.dropped);
-        let outcome = if incomplete {
-            Outcome::DonePartial
-        } else {
-            Outcome::Nothing
-        };
-        return finish(report, outcome);
-    }
-    let summary = render_clean_summary(&todo, opts.details, opts.top, &opts.style, opts.usage);
-    let _ = write!(out, "{summary}");
-    plan_notes(out, &partial, &report.dropped);
-    if !opts.assume_yes {
-        if !opts.can_prompt {
-            let _ = writeln!(err, "Keine Rückfrage möglich: --yes oder --plan angeben.");
-            return finish(report, Outcome::Aborted);
-        }
-        let _ = write!(out, "Löschen? [j/N] ");
-        let _ = out.flush();
-        if !confirm(input) {
-            let _ = writeln!(out, "Abgebrochen, nichts gelöscht.");
-            return finish(report, Outcome::Aborted);
-        }
-    }
-
+    let mut report = report_of_sel(&partial, dropped);
     let mut sudo_ok = None;
     for c in &todo {
         let _ = writeln!(out, "→ {}", c.title);
         let _ = out.flush();
+        progress(Progress::Started(c));
         let status = match &c.remover {
             Remover::BuildDirs | Remover::Trash { .. } => {
                 let ok = match &c.remover {
@@ -270,7 +297,7 @@ pub fn clean(
                 for cmd in commands_for(c) {
                     if !c.needs_sudo() {
                         failed |= !runner.run(&cmd);
-                    } else if *sudo_ok.get_or_insert_with(|| runner.can_sudo(opts.interactive)) {
+                    } else if *sudo_ok.get_or_insert_with(|| runner.can_sudo(interactive)) {
                         failed |= !runner.run_sudo(&cmd);
                     } else {
                         skipped = true;
@@ -292,6 +319,9 @@ pub fn clean(
             status,
             items: items_of(c),
         });
+        progress(Progress::Done(
+            report.categories.last().expect("just pushed"),
+        ));
     }
 
     if !report.skipped_sudo.is_empty() {
@@ -440,6 +470,35 @@ mod tests {
 
     fn report_of(cats: Vec<Category>, runner: &mut FakeRunner) -> Report {
         do_clean_full(Selection::all(cats), &opts(true), "", runner).0
+    }
+
+    #[test]
+    fn execute_reports_progress_in_order() {
+        let mut events = Vec::new();
+        let sel = Selection::all(vec![dangling(), journal()]);
+        let mut runner = FakeRunner {
+            sudo_ok: true,
+            ..Default::default()
+        };
+        let mut out = Vec::new();
+        let report = execute(sel, false, &mut runner, &mut out, &mut |p| {
+            events.push(match p {
+                Progress::Started(c) => format!("started {}", c.key),
+                Progress::Done(r) => format!("done {} {:?}", r.key, r.status),
+            })
+        });
+        assert_eq!(
+            events,
+            [
+                "started dangling",
+                "done dangling Removed",
+                "started journal",
+                "done journal Removed"
+            ]
+        );
+        assert_eq!(report.outcome, Outcome::Done);
+        assert_eq!(report.freed, 3000);
+        assert!(String::from_utf8(out).unwrap().ends_with("Fertig.\n"));
     }
 
     #[test]

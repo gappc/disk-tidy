@@ -286,7 +286,11 @@ pub fn classify(df: &DockerDf, cfg: &DockerConfig, root: &Path) -> Vec<Category>
             DANGLING
         };
         let facts = if named {
-            let name = if i.tag != "<none>" { &id } else { &i.repository };
+            let name = if i.tag != "<none>" {
+                &id
+            } else {
+                &i.repository
+            };
             vec![("Image".into(), name.clone())]
         } else {
             Vec::new()
@@ -721,7 +725,7 @@ mod tests {
     fn missing_docker_is_note() {
         let r = collect(
             &DockerConfig::default(),
-            &mut SystemRunner,
+            &mut SystemRunner::default(),
             "/nonexistent/docker",
         );
         assert_eq!(r.unwrap_err(), "docker nicht installiert");

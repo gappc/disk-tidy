@@ -170,7 +170,7 @@ fn main() -> ExitCode {
         colour: text_to_stdout && io::stdout().is_terminal() && !no_color,
     };
     let top = cli.top.unwrap_or(DEFAULT_TOP);
-    let mut runner = SystemRunner;
+    let mut runner = SystemRunner::default();
     let usage = partition::disk_usage;
     let modules: Vec<String> = match &plan {
         Some(p) => p.modules.clone(),

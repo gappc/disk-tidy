@@ -12,7 +12,23 @@ pub trait Runner {
     fn can_sudo(&mut self, interactive: bool) -> bool;
 }
 
-pub struct SystemRunner;
+/// Runs commands for real. Without `log`, errors and sudo output go to stderr (text mode);
+/// with `log` (the TUI) they are sent there instead and nothing touches the terminal.
+#[derive(Default)]
+pub struct SystemRunner {
+    pub log: Option<std::sync::mpsc::Sender<String>>,
+}
+
+impl SystemRunner {
+    fn say(&self, line: String) {
+        match &self.log {
+            Some(tx) => {
+                let _ = tx.send(line);
+            }
+            None => eprintln!("{line}"),
+        }
+    }
+}
 
 impl Runner for SystemRunner {
     fn output(&mut self, argv: &[&str]) -> Option<String> {
@@ -38,11 +54,35 @@ impl Runner for SystemRunner {
             Err(e) => e.to_string(),
         };
         let shown: Vec<&str> = argv.iter().take(4).map(String::as_str).collect();
-        eprintln!("  Fehler: {}...: {stderr}", shown.join(" "));
+        self.say(format!("  Fehler: {}...: {stderr}", shown.join(" ")));
         false
     }
 
     fn run_sudo(&mut self, argv: &[String]) -> bool {
+        if self.log.is_some() {
+            // No terminal to ask on: `-n` fails instead of prompting (credentials were
+            // cached before), and the output is captured.
+            let out = Command::new("sudo")
+                .arg("-n")
+                .args(argv)
+                .stdin(Stdio::null())
+                .output();
+            return match out {
+                Ok(out) => {
+                    for text in [&out.stdout, &out.stderr] {
+                        let text = String::from_utf8_lossy(text).trim().to_string();
+                        if !text.is_empty() {
+                            self.say(text);
+                        }
+                    }
+                    out.status.success()
+                }
+                Err(e) => {
+                    self.say(format!("  Fehler: sudo: {e}"));
+                    false
+                }
+            };
+        }
         // Its output goes to stderr, so stdout stays clean for --json.
         Command::new("sudo")
             .args(argv)
@@ -107,27 +147,41 @@ mod tests {
 
     #[test]
     fn output_of_true_command() {
-        assert_eq!(SystemRunner.output(&["echo", "hi"]), Some("hi\n".into()));
+        assert_eq!(
+            SystemRunner::default().output(&["echo", "hi"]),
+            Some("hi\n".into())
+        );
     }
 
     #[test]
     fn output_of_failing_command_is_none() {
-        assert_eq!(SystemRunner.output(&["false"]), None);
+        assert_eq!(SystemRunner::default().output(&["false"]), None);
     }
 
     #[test]
     fn output_of_missing_binary_is_none() {
-        assert_eq!(SystemRunner.output(&["/nonexistent/x"]), None);
+        assert_eq!(SystemRunner::default().output(&["/nonexistent/x"]), None);
     }
 
     #[test]
     fn run_reports_failure() {
-        assert!(!SystemRunner.run(&["false".into()]));
-        assert!(SystemRunner.run(&["true".into()]));
+        assert!(!SystemRunner::default().run(&["false".into()]));
+        assert!(SystemRunner::default().run(&["true".into()]));
+    }
+
+    #[test]
+    fn log_receives_error_instead_of_stderr() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut r = SystemRunner { log: Some(tx) };
+        assert!(!r.run(&["false".into()]));
+        drop(r);
+        let msgs: Vec<String> = rx.iter().collect();
+        assert_eq!(msgs.len(), 1);
+        assert!(msgs[0].starts_with("  Fehler: false"), "{msgs:?}");
     }
 
     #[test]
     fn run_of_missing_binary_is_failure() {
-        assert!(!SystemRunner.run(&["/nonexistent/x".into()]));
+        assert!(!SystemRunner::default().run(&["/nonexistent/x".into()]));
     }
 }

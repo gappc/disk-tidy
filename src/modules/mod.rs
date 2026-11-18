@@ -30,6 +30,31 @@ pub struct Scan {
     pub failed: Vec<String>,
 }
 
+/// One module's categories, empty ones dropped, each tagged with the module; Err(note) when
+/// the module cannot run.
+pub fn collect_module(
+    name: &str,
+    cfg: &Config,
+    runner: &mut dyn Runner,
+) -> Result<Vec<Category>, String> {
+    let found = match name {
+        "docker" => docker::collect(&cfg.docker, runner, "docker")?,
+        "projects" => projects::collect(&cfg.projects, std::time::SystemTime::now()),
+        "system" => system::collect(&cfg.system, runner),
+        "trash" => trash::collect(&trash::trash_dir()),
+        "show" => show::collect(&cfg.show),
+        _ => return Err(format!("unbekanntes Modul {name}")),
+    };
+    Ok(found
+        .into_iter()
+        .filter(|c| !c.items.is_empty())
+        .map(|mut c| {
+            c.module = name.into();
+            c
+        })
+        .collect())
+}
+
 /// Selected modules (all when `only` is empty) in MODULES order; drops empty categories and tags
 /// each with its module. A module that cannot run prints "Hinweis (<mod>): <note>" to stderr and
 /// is listed in `failed`.
@@ -40,24 +65,8 @@ pub fn collect_all(cfg: &Config, only: &[String], runner: &mut dyn Runner) -> Sc
         if !only.is_empty() && !only.iter().any(|o| o == name) {
             continue;
         }
-        let found = match name {
-            "docker" => docker::collect(&cfg.docker, runner, "docker"),
-            "projects" => Ok(projects::collect(
-                &cfg.projects,
-                std::time::SystemTime::now(),
-            )),
-            "system" => Ok(system::collect(&cfg.system, runner)),
-            "trash" => Ok(trash::collect(&trash::trash_dir())),
-            "show" => Ok(show::collect(&cfg.show)),
-            _ => unreachable!("MODULES lists every module"),
-        };
-        match found {
-            Ok(found) => cats.extend(found.into_iter().filter(|c| !c.items.is_empty()).map(
-                |mut c| {
-                    c.module = name.into();
-                    c
-                },
-            )),
+        match collect_module(name, cfg, runner) {
+            Ok(found) => cats.extend(found),
             Err(note) => {
                 eprintln!("Hinweis ({name}): {note}");
                 failed.push(name.to_string());
@@ -95,6 +104,19 @@ mod tests {
         );
         assert_eq!(scan.cats[0].module, "docker");
         assert!(scan.failed.is_empty());
+    }
+
+    #[test]
+    fn collect_module_tags_and_drops_empty() {
+        let mut r = docker_runner(r#"{"Volumes":[{"Name":"x","Links":"0","Size":"1GB"}]}"#);
+        let cats = collect_module("docker", &Config::default(), &mut r).unwrap();
+        assert_eq!(
+            cats.iter().map(|c| c.key.as_str()).collect::<Vec<_>>(),
+            ["named_volumes"]
+        );
+        assert_eq!(cats[0].module, "docker");
+        let err = collect_module("docker", &Config::default(), &mut FakeRunner::default());
+        assert_eq!(err.unwrap_err(), "docker nicht installiert");
     }
 
     #[test]

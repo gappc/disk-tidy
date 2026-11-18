@@ -327,7 +327,10 @@ mod tests {
         let item = &cats[0].items[0];
         let project = dir.path().join("old").display().to_string();
         assert_eq!(item.facts, [("Projekt".to_string(), project)]);
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
         let age = now - item.modified.unwrap();
         assert!((60 * DAY - 10..=60 * DAY + 10).contains(&age), "{age}");
     }
