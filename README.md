@@ -58,7 +58,9 @@ disk-tidy clean --yes --json                    # everything GEFAHRLOS, report a
 
 `clean --plan` scans the plan's modules again with the current config and removes an entry only if
 the plan lists it **and** the fresh scan still finds it in a GEFAHRLOS category. A plan can only
-narrow what `clean` would remove: editing `safety` or adding entries has no effect. Categories whose
+narrow what `clean` would remove: editing `safety` has no effect, and an added entry is removed
+only if the fresh scan finds it GEFAHRLOS anyway. A hand-written plan needs only `version`, `modules`
+and per category `key`, `module`, `safety` and `items[].id`. Categories whose
 remover takes no IDs (Docker build cache, apt cache, journal) are removed only if the plan lists
 every entry the fresh scan finds; otherwise they are skipped. Entries whose path is not valid UTF-8
 are left out of the plan (named on stderr) and can only be removed interactively.
@@ -99,6 +101,8 @@ Report of `clean --json` (stdout holds only this object; all text goes to stderr
   level, e.g. the project became active), `module_failed` (e.g. Docker not reachable).
 - `outcome`: `done`, `nothing`, `aborted`, `done_with_errors`, `done_skipped_sudo`, `done_partial`,
   `error` (then with `"error": "<message>"`; plan file or config errors).
+  Usage errors (unknown module, flags that do not fit the command) stay plain text on stderr
+  even with `--json`; stdout is then empty and the exit code is 2.
 
 ### Exit codes
 

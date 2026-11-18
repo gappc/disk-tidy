@@ -760,4 +760,15 @@ mod tests {
             Outcome::DoneWithErrors
         );
     }
+
+    #[test]
+    fn skipped_sudo_beats_partial() {
+        let sel = Selection {
+            todo: vec![journal()],
+            dropped: one_dropped(),
+            ..Default::default()
+        };
+        let report = do_clean_full(sel, &opts(true), "", &mut FakeRunner::default()).0;
+        assert_eq!(report.outcome, Outcome::DoneSkippedSudo);
+    }
 }

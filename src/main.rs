@@ -112,7 +112,8 @@ fn check_flags(cli: &Cli) -> Result<(), String> {
     }
 }
 
-/// Text goes to `out`; with --json that is stderr and the report is the only thing on stdout.
+/// An error before anything ran (plan file, config): a report on stdout with --json, else text on
+/// stderr; exit 2.
 fn fail(json: bool, msg: String) -> ExitCode {
     if json {
         print_json(&Report::error(msg));

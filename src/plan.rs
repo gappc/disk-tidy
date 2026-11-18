@@ -13,14 +13,18 @@ use crate::render::by_partition;
 
 pub const PLAN_VERSION: u32 = 1;
 
-/// Unknown fields are ignored, so a later version may add some.
+/// Unknown fields are ignored, so a later version may add some. Fields that only describe (titles,
+/// sizes, partitions) may be missing, so a hand-written plan needs only `version`, `modules` and
+/// per category `key`, `module`, `safety` and `items[].id`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Plan {
     pub version: u32,
     /// Unix seconds.
+    #[serde(default)]
     pub created: u64,
     /// The modules that were scanned; `clean --plan` scans these again.
     pub modules: Vec<String>,
+    #[serde(default)]
     pub partitions: Vec<PlanPartition>,
     pub categories: Vec<PlanCategory>,
 }
@@ -37,11 +41,16 @@ pub struct PlanPartition {
 pub struct PlanCategory {
     pub key: String,
     pub module: String,
+    #[serde(default)]
     pub title: String,
     pub safety: Safety,
+    #[serde(default)]
     pub why: String,
+    #[serde(default)]
     pub hint: String,
+    #[serde(default)]
     pub mount: String,
+    #[serde(default)]
     pub total: u64,
     pub items: Vec<PlanItem>,
 }
@@ -49,7 +58,9 @@ pub struct PlanCategory {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PlanItem {
     pub id: String,
+    #[serde(default)]
     pub label: String,
+    #[serde(default)]
     pub size: u64,
 }
 
@@ -439,5 +450,15 @@ mod tests {
         assert_eq!(sel.todo.len(), 1);
         assert_eq!(sel.todo[0].items.len(), 1);
         assert!(sel.todo[0].items[0].path.is_none());
+    }
+
+    #[test]
+    fn minimal_hand_written_plan_parses() {
+        let text = r#"{"version":1,"modules":["trash"],
+            "categories":[{"key":"trash","module":"trash","safety":"safe","items":[{"id":"/t/x"}]}]}"#;
+        let plan = parse_plan(text).unwrap();
+        assert_eq!(plan.categories[0].items[0].id, "/t/x");
+        let now = scan(vec![cat("trash", Safety::Safe, vec![item("/t/x", 1)])]);
+        assert_eq!(ids(&select(&plan, &now).todo), [("trash", vec!["/t/x"])]);
     }
 }

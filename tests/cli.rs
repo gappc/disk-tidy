@@ -154,3 +154,32 @@ fn plan_flag_conflict() {
         Some(2)
     );
 }
+
+#[test]
+fn json_abort_without_terminal() {
+    let home = Home::new();
+    let out = home.run(&["clean", "--only", "trash", "--json"], b"");
+    assert_eq!(out.status.code(), Some(1));
+    let r = json(&out.stdout);
+    assert_eq!(
+        (&r["outcome"], &r["exit_code"]),
+        (&"aborted".into(), &1.into())
+    );
+    assert!(home.entry().exists());
+}
+
+#[test]
+fn json_config_error() {
+    let home = Home::new();
+    let config = home.write("bad.toml", b"[[[");
+    let out = Command::new(env!("CARGO_BIN_EXE_disk-tidy"))
+        .args(["clean", "--yes", "--json", "--config", path_arg(&config)])
+        .env("HOME", home.dir.path())
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2));
+    let r = json(&out.stdout);
+    assert_eq!(r["outcome"], "error");
+    assert!(r["error"].as_str().unwrap().contains("ungültig"), "{r}");
+}
