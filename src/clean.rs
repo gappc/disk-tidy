@@ -271,6 +271,29 @@ pub fn execute(
     out: &mut dyn Write,
     progress: &mut dyn FnMut(Progress),
 ) -> Report {
+    let opts = ExecOptions {
+        interactive,
+        quiet: false,
+    };
+    execute_with(sel, opts, runner, out, progress)
+}
+
+#[derive(Clone, Copy)]
+pub struct ExecOptions {
+    /// sudo may ask for a password.
+    pub interactive: bool,
+    /// Only remover messages go to `out`: no category headers, sudo list or closing line
+    /// (the TUI shows those from the progress events and the report).
+    pub quiet: bool,
+}
+
+pub fn execute_with(
+    sel: Selection,
+    opts: ExecOptions,
+    runner: &mut dyn Runner,
+    out: &mut dyn Write,
+    progress: &mut dyn FnMut(Progress),
+) -> Report {
     let Selection {
         todo,
         partial,
@@ -278,10 +301,13 @@ pub fn execute(
     } = sel;
     let incomplete = !partial.is_empty() || !dropped.is_empty();
     let mut report = report_of_sel(&partial, dropped);
-    let mut sudo_ok = None;
     for c in &todo {
-        let _ = writeln!(out, "→ {}", c.title);
-        let _ = out.flush();
+        if !opts.quiet {
+            let _ = writeln!(out, "→ {}", c.title);
+            let _ = out.flush();
+        }
+        // Asked once per category: a sudo ticket can expire during a long run.
+        let mut sudo_ok = None;
         progress(Progress::Started(c));
         let status = match &c.remover {
             Remover::BuildDirs | Remover::Trash { .. } => {
@@ -297,7 +323,7 @@ pub fn execute(
                 for cmd in commands_for(c) {
                     if !c.needs_sudo() {
                         failed |= !runner.run(&cmd);
-                    } else if *sudo_ok.get_or_insert_with(|| runner.can_sudo(interactive)) {
+                    } else if *sudo_ok.get_or_insert_with(|| runner.can_sudo(opts.interactive)) {
                         failed |= !runner.run_sudo(&cmd);
                     } else {
                         skipped = true;
@@ -324,22 +350,10 @@ pub fn execute(
         ));
     }
 
-    if !report.skipped_sudo.is_empty() {
-        let _ = writeln!(out, "\nOhne sudo übersprungen. Selbst ausführen:");
-        for cmd in &report.skipped_sudo {
-            let _ = writeln!(out, "  {cmd}");
-        }
-    }
     let errors = report.categories.iter().any(|c| c.status == Status::Failed);
-    let _ = writeln!(
-        out,
-        "{}",
-        if errors {
-            "Fertig, mit Fehlern (siehe oben)."
-        } else {
-            "Fertig."
-        }
-    );
+    if !opts.quiet {
+        closing_lines(out, &report.skipped_sudo, errors);
+    }
     let outcome = if errors {
         Outcome::DoneWithErrors
     } else if !report.skipped_sudo.is_empty() {
@@ -350,6 +364,25 @@ pub fn execute(
         Outcome::Done
     };
     finish(report, outcome)
+}
+
+/// The sudo commands left to run by hand, then "Fertig." (with errors or not).
+fn closing_lines(out: &mut dyn Write, skipped_sudo: &[String], errors: bool) {
+    if !skipped_sudo.is_empty() {
+        let _ = writeln!(out, "\nOhne sudo übersprungen. Selbst ausführen:");
+        for cmd in skipped_sudo {
+            let _ = writeln!(out, "  {cmd}");
+        }
+    }
+    let _ = writeln!(
+        out,
+        "{}",
+        if errors {
+            "Fertig, mit Fehlern (siehe oben)."
+        } else {
+            "Fertig."
+        }
+    );
 }
 
 /// What of a plan is not carried out, one line each.
@@ -499,6 +532,58 @@ mod tests {
         assert_eq!(report.outcome, Outcome::Done);
         assert_eq!(report.freed, 3000);
         assert!(String::from_utf8(out).unwrap().ends_with("Fertig.\n"));
+    }
+
+    #[test]
+    fn sudo_is_checked_per_category() {
+        let crash = cat(
+            "crash",
+            Safety::Safe,
+            run(&["rm", "-f", "--"], true, true),
+            &["/var/crash/a"],
+        );
+        let mut runner = FakeRunner {
+            sudo_checks: vec![true, false],
+            ..Default::default()
+        };
+        let sel = Selection::all(vec![journal(), crash]);
+        let report = execute(sel, false, &mut runner, &mut Vec::new(), &mut |_| {});
+        let status: Vec<Status> = report.categories.iter().map(|c| c.status).collect();
+        assert_eq!(status, [Status::Removed, Status::SkippedSudo]);
+        assert_eq!(report.skipped_sudo, ["sudo rm -f -- /var/crash/a"]);
+    }
+
+    #[test]
+    fn quiet_execute_writes_remover_messages_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("node_modules");
+        let mut c = cat("build_stale", Safety::Safe, Remover::BuildDirs, &[]);
+        c.items = vec![Item {
+            size: 1,
+            id: missing.display().to_string(),
+            ..Default::default()
+        }];
+        let sel = Selection::all(vec![c, dangling()]);
+        let mut out = Vec::new();
+        let quiet = ExecOptions {
+            interactive: false,
+            quiet: true,
+        };
+        execute_with(
+            sel,
+            quiet,
+            &mut FakeRunner::default(),
+            &mut out,
+            &mut |_| {},
+        );
+        let out = String::from_utf8(out).unwrap();
+        assert_eq!(
+            out,
+            format!(
+                "  Übersprungen (kein Build-Ordner): {}\n",
+                missing.display()
+            )
+        );
     }
 
     #[test]

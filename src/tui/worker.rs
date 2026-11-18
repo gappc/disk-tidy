@@ -4,7 +4,7 @@ use std::io::{self, Write};
 use std::sync::mpsc::{self, Sender};
 use std::thread;
 
-use crate::clean::{Progress, Report, execute};
+use crate::clean::{ExecOptions, Progress, Report, execute_with};
 use crate::config::Config;
 use crate::model::Safety;
 use crate::modules::{MODULES, Scan, collect_module};
@@ -79,7 +79,11 @@ pub fn delete(cfg: Config, plan: Plan, tx: Sender<DeleteEvent>) {
                     tx: tx.clone(),
                     buf: Vec::new(),
                 };
-                let report = execute(sel, false, &mut runner, &mut out, &mut |p| {
+                let quiet = ExecOptions {
+                    interactive: false,
+                    quiet: true,
+                };
+                let report = execute_with(sel, quiet, &mut runner, &mut out, &mut |p| {
                     let _ = tx.send(match p {
                         Progress::Started(c) => DeleteEvent::Started(c.key.clone()),
                         Progress::Done(r) => DeleteEvent::Done(r.clone()),
@@ -99,8 +103,7 @@ pub fn delete(cfg: Config, plan: Plan, tx: Sender<DeleteEvent>) {
     });
 }
 
-/// Remover messages as `DeleteEvent::Output`, one per line. Lines the progress screen already
-/// shows its own way (category headers, the closing lines, the sudo list) are left out.
+/// Remover messages as `DeleteEvent::Output`, one per line; blank lines are left out.
 pub struct ChanWriter {
     pub tx: Sender<DeleteEvent>,
     pub buf: Vec<u8>,
@@ -109,12 +112,7 @@ pub struct ChanWriter {
 impl ChanWriter {
     fn send_line(&self, line: &[u8]) {
         let line = String::from_utf8_lossy(line).trim_end().to_string();
-        let shown_elsewhere = line.is_empty()
-            || line.starts_with("→ ")
-            || line.starts_with("Fertig")
-            || line.starts_with("Ohne sudo übersprungen")
-            || line.starts_with("  sudo ");
-        if !shown_elsewhere {
+        if !line.is_empty() {
             let _ = self.tx.send(DeleteEvent::Output(line));
         }
     }
@@ -152,18 +150,14 @@ mod tests {
     }
 
     #[test]
-    fn chan_writer_sends_remover_lines_only() {
+    fn chan_writer_sends_lines() {
         let (tx, rx) = mpsc::channel();
         let mut w = ChanWriter {
             tx,
             buf: Vec::new(),
         };
-        write!(w, "→ Papierkorb\n  Fehler: /x: kaputt\nFer").unwrap();
-        write!(
-            w,
-            "tig.\n\nOhne sudo übersprungen. Selbst ausführen:\n  sudo apt clean\nRest"
-        )
-        .unwrap();
+        write!(w, "  Fehler: /x: kap").unwrap();
+        write!(w, "utt\n\n  sudo: a password is required\nRest").unwrap();
         w.flush().unwrap();
         drop(w);
         let lines: Vec<String> = rx
@@ -173,6 +167,13 @@ mod tests {
                 _ => panic!("only output"),
             })
             .collect();
-        assert_eq!(lines, ["  Fehler: /x: kaputt", "Rest"]);
+        assert_eq!(
+            lines,
+            [
+                "  Fehler: /x: kaputt",
+                "  sudo: a password is required",
+                "Rest"
+            ]
+        );
     }
 }

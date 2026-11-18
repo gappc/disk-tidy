@@ -36,6 +36,10 @@ pub struct Item {
     /// Short facts for the TUI's details popup, e.g. ("Projekt", "~/p/x").
     #[serde(skip)]
     pub facts: Vec<(String, String)>,
+    /// What `id` must still point to when the TUI rechecks before deleting: the image ID for
+    /// images, which are removed by name. Not in the plan JSON.
+    #[serde(skip)]
+    pub fingerprint: Option<String>,
 }
 
 impl Item {

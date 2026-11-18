@@ -412,3 +412,86 @@ fn q_on_report_quits() {
     assert_eq!(app.on_key(Key::Char('q')), Action::Quit);
     assert!(!app.rescan_requested);
 }
+
+#[test]
+fn cursor_follows_row_when_rows_arrive() {
+    // cursor on "/ ✗ vorsicht"; then a "/ ⚠ prüfen" row arrives before it
+    let mut app = App::new(usage, mount);
+    let data = cat(
+        "named_volumes",
+        "/",
+        Safety::Data,
+        Remover::None,
+        &[("v", 10)],
+    );
+    app.on_scan(ScanEvent::Done(vec![data]));
+    let check = cat("containers", "/", Safety::Check, run(true), &[("x", 30)]);
+    app.on_scan(ScanEvent::Done(vec![check]));
+    assert_eq!(app.rows()[app.cursor()].safety, Safety::Data);
+    app.on_key(Key::Space);
+    assert_eq!(app.selected_check(), (0, 0));
+}
+
+#[test]
+fn categories_cursor_follows_category() {
+    let mut app = scanning();
+    keys(&mut app, &[Key::Enter, Key::Down]);
+    assert_eq!(app.categories()[app.cursor()].key, "build_cache");
+    app.on_scan(ScanEvent::Done(vec![cat(
+        "big",
+        "/",
+        Safety::Safe,
+        Remover::BuildDirs,
+        &[("z", 999)],
+    )]));
+    assert_eq!(app.categories()[app.cursor()].key, "build_cache");
+}
+
+#[test]
+fn non_utf8_entries_are_not_tickable() {
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt;
+    let mut c = cat(
+        "trash",
+        "/",
+        Safety::Safe,
+        Remover::BuildDirs,
+        &[("ok", 5), ("bad", 7)],
+    );
+    c.items[1].path = Some(PathBuf::from(OsString::from_vec(b"/t/a\xff".to_vec())));
+    let mut app = App::new(usage, mount);
+    app.on_scan(ScanEvent::Done(vec![c]));
+    app.on_scan(ScanEvent::Finished);
+    assert_eq!(app.selected_total(), 5);
+    let (c, bad) = item(&app, "trash", "bad");
+    assert_eq!(app.mark_item(c, bad), Mark::Fixed);
+    assert_eq!(app.mark_cat(c), Mark::On);
+    keys(&mut app, &[Key::Enter, Key::Right, Key::Down, Key::Space]);
+    assert_eq!(app.selected_total(), 5);
+    assert!(matches!(&app.popup, Popup::Message(m) if m.contains("UTF-8")));
+}
+
+#[test]
+fn plan_carries_image_fingerprint() {
+    let mut c = cat(
+        "containers",
+        "/",
+        Safety::Check,
+        run(true),
+        &[("node:22", 5)],
+    );
+    c.items[0].fingerprint = Some("sha256:old".into());
+    let mut app = App::new(usage, mount);
+    app.on_scan(ScanEvent::Done(vec![c]));
+    app.on_scan(ScanEvent::Finished);
+    let Action::Delete(plan) = keys(
+        &mut app,
+        &[Key::Space, Key::Char('d'), Key::Enter, Key::Char('j')],
+    ) else {
+        panic!("no delete");
+    };
+    assert_eq!(
+        plan.categories[0].items[0].fingerprint.as_deref(),
+        Some("sha256:old")
+    );
+}

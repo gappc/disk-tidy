@@ -40,7 +40,8 @@ struct Guard {
 impl Guard {
     fn new() -> io::Result<Guard> {
         enter().inspect_err(|_| restore())?;
-        let terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
+        let terminal =
+            Terminal::new(CrosstermBackend::new(io::stdout())).inspect_err(|_| restore())?;
         Ok(Guard { terminal })
     }
 

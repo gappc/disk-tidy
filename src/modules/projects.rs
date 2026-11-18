@@ -166,6 +166,7 @@ pub fn classify_dirs(
             path: Some(b),
             modified: last.duration_since(UNIX_EPOCH).ok().map(|d| d.as_secs()),
             facts: vec![("Projekt".into(), short(&project))],
+            fingerprint: None,
         };
         if last <= cutoff {
             &mut stale

@@ -255,6 +255,7 @@ pub fn classify(df: &DockerDf, cfg: &DockerConfig, root: &Path) -> Vec<Category>
                 ("Image".into(), c.image.clone()),
                 ("Status".into(), c.status.clone()),
             ],
+            fingerprint: None,
         });
     }
 
@@ -302,6 +303,7 @@ pub fn classify(df: &DockerDf, cfg: &DockerConfig, root: &Path) -> Vec<Category>
             path: None,
             modified: parse_timestamp(&i.created_at),
             facts,
+            fingerprint: Some(i.id.clone()),
         });
     }
 
@@ -655,6 +657,7 @@ mod tests {
         let img = &k["unused_images"].items[0];
         assert_eq!(img.modified, Some(1791453600));
         assert_eq!(img.facts, [s("Image", "node:22")]);
+        assert_eq!(img.fingerprint.as_deref(), Some("sha256:e4"));
         let c = &k["containers"].items[0];
         assert_eq!(c.modified, Some(1791453600));
         assert_eq!(c.facts, [s("Image", "img:1"), s("Status", "Exited (1)")]);

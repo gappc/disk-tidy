@@ -1,5 +1,5 @@
 //! `disk-tidy plan`: everything a scan found, as JSON, and what `clean --plan` may remove of it.
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use anyhow::{Context, bail};
@@ -62,6 +62,9 @@ pub struct PlanItem {
     pub label: String,
     #[serde(default)]
     pub size: u64,
+    /// Set by the TUI only: the item must still have this fingerprint (image ID).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fingerprint: Option<String>,
 }
 
 /// The plan of a scan, in preview order (partition, level, size). Items whose path is not valid
@@ -97,6 +100,7 @@ pub fn build_plan(
                             id: i.id.clone(),
                             label: i.label.clone(),
                             size: i.size,
+                            fingerprint: None,
                         });
                     }
                 }
@@ -130,10 +134,14 @@ pub fn build_plan(
 /// unmatched plan items are reported as dropped (those whose level is in `levels`).
 pub fn select(plan: &Plan, scan: &Scan, levels: &[Safety]) -> Selection {
     let eligible = |c: &Category| levels.contains(&c.safety) && c.selectable();
-    let listed: HashSet<(&str, &str)> = plan
+    let listed: HashMap<(&str, &str), Option<&str>> = plan
         .categories
         .iter()
-        .flat_map(|c| c.items.iter().map(|i| (c.key.as_str(), i.id.as_str())))
+        .flat_map(|c| {
+            c.items
+                .iter()
+                .map(|i| ((c.key.as_str(), i.id.as_str()), i.fingerprint.as_deref()))
+        })
         .collect();
     let mut sel = Selection::default();
     for c in scan.cats.iter().filter(|c| eligible(c)) {
@@ -141,7 +149,9 @@ pub fn select(plan: &Plan, scan: &Scan, levels: &[Safety]) -> Selection {
         // A non-UTF-8 path is never in a plan; its lossy id could match a real name.
         kept.items.retain(|i| {
             i.path.as_ref().is_none_or(|p| p.to_str().is_some())
-                && listed.contains(&(c.key.as_str(), i.id.as_str()))
+                && listed
+                    .get(&(c.key.as_str(), i.id.as_str()))
+                    .is_some_and(|fp| fp.is_none_or(|fp| i.fingerprint.as_deref() == Some(fp)))
         });
         if kept.items.is_empty() {
             continue;
@@ -299,7 +309,8 @@ mod tests {
             [PlanItem {
                 id: "c".into(),
                 label: "label c".into(),
-                size: 10
+                size: 10,
+                fingerprint: None,
             }]
         );
     }
@@ -497,6 +508,39 @@ mod tests {
             sel.dropped,
             [dropped("stopped_images", "y", Reason::NotSafe)]
         );
+    }
+
+    #[test]
+    fn replaced_image_is_not_removed() {
+        let image = |fp: &str| {
+            let mut c = cat("unused_images", Safety::Check, vec![item("node:22", 1)]).remover(
+                Remover::Run {
+                    argv: vec!["docker".into(), "rmi".into()],
+                    with_ids: true,
+                    sudo: false,
+                },
+            );
+            c.items[0].fingerprint = Some(fp.into());
+            c
+        };
+        let mut plan = plan_of(vec![image("sha256:old")]);
+        plan.categories[0].items[0].fingerprint = Some("sha256:old".into());
+        let sel = select(&plan, &scan(vec![image("sha256:new")]), TUI);
+        assert!(sel.todo.is_empty());
+        assert_eq!(
+            sel.dropped,
+            [dropped("unused_images", "node:22", Reason::Gone)]
+        );
+        let sel = select(&plan, &scan(vec![image("sha256:old")]), TUI);
+        assert_eq!(ids(&sel.todo), [("unused_images", vec!["node:22"])]);
+    }
+
+    #[test]
+    fn plan_json_has_no_fingerprint() {
+        let mut c = cat("unused_images", Safety::Check, vec![item("node:22", 1)]);
+        c.items[0].fingerprint = Some("sha256:x".into());
+        let json = serde_json::to_string(&plan_of(vec![c])).unwrap();
+        assert!(!json.contains("fingerprint"), "{json}");
     }
 
     #[test]

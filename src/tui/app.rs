@@ -144,6 +144,12 @@ fn sel_key(c: &Category, i: &Item) -> (String, String) {
     (c.key.clone(), i.id.clone())
 }
 
+/// Can be ticked: the category is selectable, and a path, if any, is valid UTF-8 (other paths
+/// cannot be matched again before deleting, see `plan::select`).
+fn tickable(c: &Category, i: &Item) -> bool {
+    c.selectable() && i.path.as_ref().is_none_or(|p| p.to_str().is_some())
+}
+
 impl App {
     pub fn new(usage: fn(&Path) -> Usage, mount: fn(&Path) -> PathBuf) -> App {
         App {
@@ -182,12 +188,33 @@ impl App {
         match ev {
             ScanEvent::Started(name) => self.scanning = Some(name),
             ScanEvent::Done(cats) => {
+                // New rows and categories can land before the cursor: keep it on its line.
+                let row = self
+                    .rows()
+                    .get(self.row_cursor)
+                    .map(|r| (r.mount.clone(), r.safety));
+                let cat = self.open_indexes().get(self.cat_cursor).copied();
                 for c in cats {
                     if c.safety == Safety::Safe {
-                        self.selected.extend(c.items.iter().map(|i| sel_key(&c, i)));
+                        let keys = c.items.iter().filter(|i| tickable(&c, i));
+                        self.selected.extend(keys.map(|i| sel_key(&c, i)));
                     }
                     self.mounts.push((self.mount)(&c.path));
                     self.cats.push(c);
+                }
+                if let Some((mount, safety)) = row {
+                    let rows = self.rows();
+                    if let Some(n) = rows
+                        .iter()
+                        .position(|r| r.mount == mount && r.safety == safety)
+                    {
+                        self.row_cursor = n;
+                    }
+                }
+                if let Some(i) = cat
+                    && let Some(n) = self.open_indexes().iter().position(|&j| j == i)
+                {
+                    self.cat_cursor = n;
                 }
             }
             ScanEvent::Failed(name, note) => self.failed.push((name, note)),
@@ -268,7 +295,7 @@ impl App {
     }
 
     fn is_selected(&self, c: &Category, i: &Item) -> bool {
-        c.selectable() && self.selected.contains(&sel_key(c, i))
+        tickable(c, i) && self.selected.contains(&sel_key(c, i))
     }
 
     pub fn rows(&self) -> Vec<Row> {
@@ -335,16 +362,18 @@ impl App {
         if !c.selectable() {
             return Mark::Fixed;
         }
+        let tickable = c.items.iter().filter(|i| tickable(c, i)).count();
         let on = c.items.iter().filter(|i| self.is_selected(c, i)).count();
         match on {
+            _ if tickable == 0 => Mark::Fixed,
             0 => Mark::Off,
-            n if n == c.items.len() => Mark::On,
+            n if n == tickable => Mark::On,
             _ => Mark::Partial,
         }
     }
 
     pub fn mark_item(&self, c: &Category, i: &Item) -> Mark {
-        if !c.selectable() {
+        if !tickable(c, i) {
             Mark::Fixed
         } else if c.all_or_nothing() {
             Mark::Whole
@@ -593,7 +622,11 @@ impl App {
     }
 
     fn keys_of(c: &Category) -> Vec<(String, String)> {
-        c.items.iter().map(|i| sel_key(c, i)).collect()
+        c.items
+            .iter()
+            .filter(|i| tickable(c, i))
+            .map(|i| sel_key(c, i))
+            .collect()
     }
 
     fn not_selectable(&mut self, c: &Category) {
@@ -636,8 +669,14 @@ impl App {
                 if !c.selectable() || c.all_or_nothing() {
                     self.toggle_cat(i);
                 } else if let Some(item) = c.items.get(self.entry_cursor) {
-                    let k = sel_key(c, item);
-                    self.toggle(vec![k]);
+                    if tickable(c, item) {
+                        let k = sel_key(c, item);
+                        self.toggle(vec![k]);
+                    } else {
+                        self.popup = Popup::Message(
+                            "Nicht auswählbar – der Name ist kein gültiges UTF-8.".into(),
+                        );
+                    }
                 }
             }
             Screen::Review => {
@@ -719,6 +758,7 @@ impl App {
                     id: i.id.clone(),
                     label: i.label.clone(),
                     size: i.size,
+                    fingerprint: i.fingerprint.clone(),
                 })
                 .collect();
             if !plan.modules.contains(&c.module) {
