@@ -1,5 +1,6 @@
 //! disk-tidy: see what fills the disk, sorted by size, and remove only the safe parts.
 //!
+//!   disk-tidy                                                    On a terminal: interactive (TUI).
 //!   disk-tidy [preview] [--details [--top N]] [--only MOD,...]   Overview per partition (read-only).
 //!   disk-tidy clean [--yes] [--details] [--only MOD,...]         Remove the GEFAHRLOS part, after asking.
 //!   disk-tidy plan [--only MOD,...]                              Everything found, as JSON.
@@ -14,7 +15,6 @@ mod render;
 mod runner;
 mod size;
 mod time;
-#[allow(dead_code)] // wired up in main with the terminal loop
 mod tui;
 
 use std::io::{self, IsTerminal, Read, Write};
@@ -41,8 +41,9 @@ enum Command {
 #[derive(Parser)]
 #[command(name = "disk-tidy", version)]
 struct Cli {
-    #[arg(value_enum, default_value = "preview")]
-    command: Command,
+    /// ohne Befehl im Terminal: interaktiv; sonst preview
+    #[arg(value_enum)]
+    command: Option<Command>,
     /// einzelne Einträge und Befehle zum Löschen von Hand zeigen
     #[arg(short, long)]
     details: bool,
@@ -98,7 +99,7 @@ fn check_flags(cli: &Cli) -> Result<(), String> {
         ("--plan", cli.plan.is_some()),
         ("--only", !cli.only.is_empty()),
     ];
-    let (context, refused): (&str, &[&str]) = match cli.command {
+    let (context, refused): (&str, &[&str]) = match cli.command.unwrap_or(Command::Preview) {
         Command::Plan => ("plan", &["--details", "--top", "--yes", "--json", "--plan"]),
         Command::Preview => ("preview", &["--json", "--plan", "--yes"]),
         Command::Clean if cli.plan.is_some() => {
@@ -147,6 +148,19 @@ fn read_plan(path: &Path) -> anyhow::Result<plan::Plan> {
     Ok(plan)
 }
 
+/// `disk-tidy` alone, on a terminal (stdin and stdout), without flags that ask for text output.
+fn wants_tui(cli: &Cli, stdin_tty: bool, stdout_tty: bool) -> bool {
+    cli.command.is_none()
+        && stdin_tty
+        && stdout_tty
+        && !cli.details
+        && cli.top.is_none()
+        && cli.only.is_empty()
+        && !cli.yes
+        && cli.plan.is_none()
+        && !cli.json
+}
+
 fn main() -> ExitCode {
     let cli = Cli::parse();
     let usage_error = |kind, msg: String| Cli::command().error(kind, msg).exit();
@@ -167,6 +181,12 @@ fn main() -> ExitCode {
         Err(e) => return fail(cli.json, format!("{e:#}")),
     };
     let no_color = std::env::var_os("NO_COLOR").is_some_and(|v| !v.is_empty());
+    if wants_tui(&cli, io::stdin().is_terminal(), io::stdout().is_terminal()) {
+        return match tui::run(&cfg, !no_color) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => fail(false, format!("{e:#}")),
+        };
+    }
     let text_to_stdout = !cli.json;
     let style = Style {
         colour: text_to_stdout && io::stdout().is_terminal() && !no_color,
@@ -180,7 +200,7 @@ fn main() -> ExitCode {
     };
     let scan = modules::collect_all(&cfg, &modules, &mut runner);
 
-    match cli.command {
+    match cli.command.unwrap_or(Command::Preview) {
         Command::Preview => {
             let text = render::render_preview(&scan.cats, cli.details, top, &style, &usage);
             let _ = io::stdout().write_all(text.as_bytes()); // a closed pipe (| head) is fine
@@ -289,6 +309,31 @@ mod tests {
             check(&["plan", "--top", "3"]).unwrap_err(),
             "--top passt nicht zu plan"
         );
+    }
+
+    #[test]
+    fn wants_tui_rules() {
+        let tui = |args: &[&str], ttys: bool| {
+            let mut argv = vec!["disk-tidy"];
+            argv.extend_from_slice(args);
+            wants_tui(&Cli::try_parse_from(argv).unwrap(), ttys, ttys)
+        };
+        assert!(tui(&[], true));
+        assert!(tui(&["--config", "/x.toml"], true));
+        assert!(!tui(&[], false));
+        assert!(!tui(&["preview"], true));
+        for flag in [
+            &["--details"][..],
+            &["--top", "3"],
+            &["--only", "trash"],
+            &["--yes"],
+            &["--plan", "p.json"],
+            &["--json"],
+        ] {
+            assert!(!tui(flag, true), "{flag:?}");
+        }
+        let cli = Cli::try_parse_from(["disk-tidy"]).unwrap();
+        assert!(!wants_tui(&cli, true, false) && !wants_tui(&cli, false, true));
     }
 
     #[test]

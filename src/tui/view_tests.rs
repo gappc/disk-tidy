@@ -83,7 +83,7 @@ fn entries_show_marks_and_age() {
         &[("old", 5)],
     );
     c.items[0].modified = Some(now() - 41 * 86_400);
-    aged.on_scan(ScanEvent::Done("trash".into(), vec![c]));
+    aged.on_scan(ScanEvent::Done(vec![c]));
     aged.on_scan(ScanEvent::Finished);
     keys(&mut aged, &[Key::Enter, Key::Right]);
     has(&screen(&aged, 80, 24), "vor 41 Tg.");
@@ -120,16 +120,13 @@ fn review_highlights_check() {
 
 fn check_app() -> App {
     let mut app = App::new(usage, mount);
-    app.on_scan(ScanEvent::Done(
-        "docker".into(),
-        vec![cat(
-            "unused_images",
-            "/",
-            Safety::Check,
-            run(true),
-            &[("rust:1", 2_400_000_000), ("node:22", 1_200_000_000)],
-        )],
-    ));
+    app.on_scan(ScanEvent::Done(vec![cat(
+        "unused_images",
+        "/",
+        Safety::Check,
+        run(true),
+        &[("rust:1", 2_400_000_000), ("node:22", 1_200_000_000)],
+    )]));
     app.on_scan(ScanEvent::Finished);
     app
 }
@@ -181,10 +178,13 @@ fn long_list_keeps_cursor_visible() {
     let mut app = App::new(usage, mount);
     let ids: Vec<(String, u64)> = (0..200).map(|i| (format!("e{i:03}"), 1000 - i)).collect();
     let refs: Vec<(&str, u64)> = ids.iter().map(|(s, n)| (s.as_str(), *n)).collect();
-    app.on_scan(ScanEvent::Done(
-        "trash".into(),
-        vec![cat("trash", "/", Safety::Safe, Remover::BuildDirs, &refs)],
-    ));
+    app.on_scan(ScanEvent::Done(vec![cat(
+        "trash",
+        "/",
+        Safety::Safe,
+        Remover::BuildDirs,
+        &refs,
+    )]));
     app.on_scan(ScanEvent::Finished);
     keys(&mut app, &[Key::Enter, Key::Right]);
     for _ in 0..199 {
@@ -229,7 +229,7 @@ fn details_popup_shows_facts() {
         &[("/p/x/target", 5)],
     );
     c.items[0].facts = vec![("Projekt".into(), "~/p/x".into())];
-    app.on_scan(ScanEvent::Done("projects".into(), vec![c]));
+    app.on_scan(ScanEvent::Done(vec![c]));
     app.on_scan(ScanEvent::Finished);
     keys(&mut app, &[Key::Enter, Key::Right, Key::Char('i')]);
     let s = screen(&app, 80, 24);

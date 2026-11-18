@@ -93,7 +93,7 @@ pub(crate) fn cats() -> Vec<Category> {
 pub(crate) fn scanning() -> App {
     let mut app = App::new(usage, mount);
     app.on_scan(ScanEvent::Started("docker".into()));
-    app.on_scan(ScanEvent::Done("docker".into(), cats()));
+    app.on_scan(ScanEvent::Done(cats()));
     app
 }
 
@@ -386,4 +386,20 @@ fn report_then_rescan() {
     app.reset_scan();
     assert!(app.rows().is_empty() && !app.scan_done && app.report.is_none());
     assert_eq!(app.screen, Screen::Overview);
+}
+
+#[test]
+fn finished_fills_categories_without_progress() {
+    use crate::clean::{CatResult, Status};
+    let mut app = app();
+    keys(&mut app, &[Key::Char('d'), Key::Enter, Key::Char('j')]);
+    let mut report = Report::error("x".into());
+    report.categories = vec![CatResult {
+        key: "build_cache".into(),
+        status: Status::SkippedPartial,
+        items: Vec::new(),
+    }];
+    app.on_delete(DeleteEvent::Finished(report));
+    let p = app.progress.iter().find(|p| p.0 == "build_cache").unwrap();
+    assert_eq!(p.2.as_ref().unwrap().status, Status::SkippedPartial);
 }

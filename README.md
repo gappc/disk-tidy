@@ -8,14 +8,15 @@ says in one line what deleting it costs:
 | Level | Meaning | Removed by `clean` |
 |---|---|---|
 | ✓ GEFAHRLOS | recoverable without loss: caches, leftovers, build output of idle projects | yes |
-| ⚠ PRÜFEN | recoverable, but costs time or downloads | no, by hand |
+| ⚠ PRÜFEN | recoverable, but costs time or downloads | no; selectable in the TUI or by hand |
 | ✗ VORSICHT | may hold data that cannot be recovered | no, by hand |
 | ℹ NUR INFO | displayed only | never |
 
 ## Usage
 
 ```sh
-disk-tidy                          # overview: one line per category, grouped by level
+disk-tidy                          # on a terminal: interactive (see TUI below)
+disk-tidy preview                  # overview: one line per category, grouped by level
 disk-tidy --details                # plus the entries (top 15) and the command to remove by hand
 disk-tidy --details --top 0        # every entry
 disk-tidy --only docker            # modules: docker, projects, system, trash, show
@@ -44,6 +45,41 @@ Details:
   and `.git` changed, so a monorepo with recent edits keeps all its `node_modules`.
 - System commands run with `sudo`. Without a terminal and without passwordless sudo they are skipped
   and printed at the end instead (exit 4).
+
+## TUI
+
+`disk-tidy` without a command opens an interactive view when stdin and stdout are a terminal and
+none of `--details`, `--top`, `--only`, `--yes`, `--plan`, `--json` is given (`--config` works).
+Otherwise it prints the text preview as before; `disk-tidy preview` always prints text.
+
+1. **Overview:** one row per partition and level: entries, size, selected, free space afterwards.
+   Rows appear as the modules finish; a failed module is named below.
+2. **Categories** of a row, then **entries** of a category, with size, age and path.
+3. **`d`:** review of only what will be deleted, grouped by partition; ⚠ PRÜFEN entries are
+   listed one by one with their cost. ⏎ asks once more, naming the PRÜFEN part; `j` deletes.
+4. **Progress and report**, then a fresh scan.
+
+| Key | |
+|---|---|
+| ↑ ↓ | move |
+| ⏎ → / ← Esc | open / back |
+| ␣ | tick or untick the row, category or entry |
+| `a` `n` | all / no entries of the category |
+| `i` | details: level, cost, project, image, age, manual command |
+| `d` | review and delete |
+| `?` `q` | help, quit (refused while deleting) |
+
+- GEFAHRLOS is ticked at the start. PRÜFEN can be ticked: unused images (`docker rmi`), stopped
+  containers (`docker rm`), build dirs of active projects. Images of stopped containers, VORSICHT and
+  NUR INFO cannot be ticked. Categories without IDs (Docker build cache, journal, apt cache) go as a
+  whole.
+- Before deleting, the selected modules are scanned again. An entry is removed only if it is still in
+  the same category and that category is still GEFAHRLOS or (for ticked PRÜFEN entries) PRÜFEN;
+  everything else is listed as "nicht mehr gültig".
+- If sudo is needed and has no cached password, the TUI steps aside for `sudo -v` and returns.
+- `NO_COLOR` turns colour off; levels always carry a symbol and a word.
+
+`clean` and `clean --plan` still remove GEFAHRLOS only.
 
 ## Automation
 

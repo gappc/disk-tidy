@@ -47,13 +47,13 @@ pub enum Status {
     SkippedPartial,
 }
 
-#[derive(Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct ReportItem {
     pub id: String,
     pub size: u64,
 }
 
-#[derive(Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct CatResult {
     pub key: String,
     pub status: Status,

@@ -24,7 +24,7 @@ pub enum Key {
 /// From the scan worker.
 pub enum ScanEvent {
     Started(String),
-    Done(String, Vec<Category>),
+    Done(Vec<Category>),
     Failed(String, String),
     Finished,
 }
@@ -181,7 +181,7 @@ impl App {
     pub fn on_scan(&mut self, ev: ScanEvent) {
         match ev {
             ScanEvent::Started(name) => self.scanning = Some(name),
-            ScanEvent::Done(_, cats) => {
+            ScanEvent::Done(cats) => {
                 for c in cats {
                     if c.safety == Safety::Safe {
                         self.selected.extend(c.items.iter().map(|i| sel_key(&c, i)));
@@ -216,6 +216,16 @@ impl App {
             DeleteEvent::Finished(report) => {
                 self.rechecking = false;
                 self.running = None;
+                // Categories that never ran (a plan only partly matching) are in the report only.
+                for r in &report.categories {
+                    if let Some(p) = self
+                        .progress
+                        .iter_mut()
+                        .find(|p| p.0 == r.key && p.2.is_none())
+                    {
+                        p.2 = Some(r.clone());
+                    }
+                }
                 self.report = Some(report);
                 self.screen = Screen::Report;
                 self.popup = Popup::None;
@@ -373,10 +383,6 @@ impl App {
             .map(|i| self.selected_size(&self.cats[i]))
             .sum();
         (self.usage)(mount).free + selected
-    }
-
-    pub fn usage(&self, mount: &Path) -> Usage {
-        (self.usage)(mount)
     }
 
     pub fn review_lines(&self) -> Vec<ReviewLine> {

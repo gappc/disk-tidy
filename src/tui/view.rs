@@ -478,6 +478,9 @@ fn progress(frame: &mut Frame, app: &App, p: &Paint, area: Rect) -> (String, Str
                 }
             }
             None if app.running.as_deref() == Some(key) => Line::from(format!("… {title}")),
+            None if app.report.is_some() => {
+                Line::from(format!("– {title:<40} nicht mehr gültig")).style(p.dim())
+            }
             None => Line::from(format!("  {title}")).style(p.dim()),
         };
         lines.push(line);
@@ -552,10 +555,12 @@ fn popup(frame: &mut Frame, title: &str, bottom: &str, lines: Vec<Line>) {
         + 4;
     let area = centred(frame.area(), width.max(30), lines.len() as u16 + 2);
     frame.render_widget(Clear, area);
-    let block = Block::new()
+    let mut block = Block::new()
         .borders(Borders::ALL)
-        .title(format!(" {title} "))
-        .title_bottom(Line::from(format!(" {bottom} ")).right_aligned());
+        .title(format!(" {title} "));
+    if !bottom.is_empty() {
+        block = block.title_bottom(Line::from(format!(" {bottom} ")).right_aligned());
+    }
     frame.render_widget(
         Paragraph::new(lines)
             .block(block)
