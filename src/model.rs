@@ -1,10 +1,10 @@
 //! Categories of removable or displayed disk usage, and how to remove them.
 use std::path::PathBuf;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// Safety level, from harmless to never touched. Only `Safe` is removed by `disk-tidy clean`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Safety {
     /// Recoverable without loss: caches, leftovers, build output of idle projects.
