@@ -24,10 +24,18 @@ pub fn glob_sorted(pattern: &str) -> Vec<String> {
 
 pub const MODULES: [&str; 5] = ["docker", "projects", "system", "trash", "show"];
 
-/// Selected modules (all when `only` is empty) in MODULES order; drops empty categories.
-/// A module that cannot run prints "Hinweis (<mod>): <note>" to stderr.
-pub fn collect_all(cfg: &Config, only: &[String], runner: &mut dyn Runner) -> Vec<Category> {
+/// What a scan found, and which modules could not run.
+pub struct Scan {
+    pub cats: Vec<Category>,
+    pub failed: Vec<String>,
+}
+
+/// Selected modules (all when `only` is empty) in MODULES order; drops empty categories and tags
+/// each with its module. A module that cannot run prints "Hinweis (<mod>): <note>" to stderr and
+/// is listed in `failed`.
+pub fn collect_all(cfg: &Config, only: &[String], runner: &mut dyn Runner) -> Scan {
     let mut cats = Vec::new();
+    let mut failed = Vec::new();
     for name in MODULES {
         if !only.is_empty() && !only.iter().any(|o| o == name) {
             continue;
@@ -44,11 +52,22 @@ pub fn collect_all(cfg: &Config, only: &[String], runner: &mut dyn Runner) -> Ve
             _ => unreachable!("MODULES lists every module"),
         };
         match found {
-            Ok(found) => cats.extend(found.into_iter().filter(|c| !c.items.is_empty())),
-            Err(note) => eprintln!("Hinweis ({name}): {note}"),
+            Ok(found) => cats.extend(
+                found
+                    .into_iter()
+                    .filter(|c| !c.items.is_empty())
+                    .map(|mut c| {
+                        c.module = name.into();
+                        c
+                    }),
+            ),
+            Err(note) => {
+                eprintln!("Hinweis ({name}): {note}");
+                failed.push(name.to_string());
+            }
         }
     }
-    cats
+    Scan { cats, failed }
 }
 
 #[cfg(test)]
@@ -72,20 +91,23 @@ mod tests {
     #[test]
     fn drops_empty_categories() {
         let mut r = docker_runner(r#"{"Volumes":[{"Name":"x","Links":"0","Size":"1GB"}]}"#);
-        let cats = collect_all(&Config::default(), &["docker".into()], &mut r);
+        let scan = collect_all(&Config::default(), &["docker".into()], &mut r);
         assert_eq!(
-            cats.iter().map(|c| c.key.as_str()).collect::<Vec<_>>(),
+            scan.cats.iter().map(|c| c.key.as_str()).collect::<Vec<_>>(),
             ["named_volumes"]
         );
+        assert_eq!(scan.cats[0].module, "docker");
+        assert!(scan.failed.is_empty());
     }
 
     #[test]
     fn failing_module_gives_no_categories() {
-        let cats = collect_all(
+        let scan = collect_all(
             &Config::default(),
             &["docker".into()],
             &mut FakeRunner::default(),
         );
-        assert!(cats.is_empty());
+        assert!(scan.cats.is_empty());
+        assert_eq!(scan.failed, ["docker"]);
     }
 }

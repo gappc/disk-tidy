@@ -61,6 +61,8 @@ pub enum Remover {
 #[derive(Clone, Debug, Serialize)]
 pub struct Category {
     pub key: String,
+    /// The module that found it; set by `collect_all`.
+    pub module: String,
     pub title: String,
     /// Any path on the partition this category lives on.
     pub path: PathBuf,
@@ -83,6 +85,7 @@ impl Category {
     ) -> Self {
         Category {
             key: key.into(),
+            module: String::new(),
             title: title.into(),
             path: path.into(),
             safety,

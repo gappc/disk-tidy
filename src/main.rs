@@ -87,7 +87,7 @@ fn main() -> ExitCode {
         colour: io::stdout().is_terminal() && !no_color,
     };
     let mut runner = SystemRunner;
-    let cats = modules::collect_all(&cfg, &only, &mut runner);
+    let cats = modules::collect_all(&cfg, &only, &mut runner).cats;
     let usage = partition::disk_usage;
 
     if cli.command == Command::Preview {
