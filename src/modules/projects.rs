@@ -143,7 +143,8 @@ pub fn classify_dirs(
         Safety::Check,
         "du arbeitest daran; danach neu installieren oder bauen",
     )
-    .hint("rm -rf <ordner>  (oder cargo clean)");
+    .hint("rm -rf <ordner>  (oder cargo clean)")
+    .remover(Remover::BuildDirs);
 
     let cutoff = now - Duration::from_secs(stale_days * DAY);
     let home = home();
@@ -298,6 +299,7 @@ mod tests {
         assert_eq!(cats[1].key, "build_active");
         assert_eq!(cats[1].safety, Safety::Check);
         assert_eq!(cats[1].hint, "rm -rf <ordner>  (oder cargo clean)");
+        assert_eq!(cats[1].remover, Remover::BuildDirs);
         assert_eq!(
             rel(&cats[1], dir.path()),
             ["fresh/target", "mono/pkgs/a/node_modules"]

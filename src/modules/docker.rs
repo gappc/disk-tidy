@@ -202,7 +202,8 @@ pub fn classify(df: &DockerDf, cfg: &DockerConfig, root: &Path) -> Vec<Category>
             Check,
             "werden bei Bedarf neu heruntergeladen oder gebaut",
         )
-        .hint("docker rmi <image>"),
+        .hint("docker rmi <image>")
+        .remover(run(&["docker", "rmi"], true)),
         cat(
             "stopped_images",
             "Docker: Images gestoppter Container",
@@ -216,7 +217,8 @@ pub fn classify(df: &DockerDf, cfg: &DockerConfig, root: &Path) -> Vec<Category>
             Check,
             "Änderungen und Logs im Container gehen verloren",
         )
-        .hint("docker rm <container>"),
+        .hint("docker rm <container>")
+        .remover(run(&["docker", "rm"], true)),
         cat(
             "named_volumes",
             "Docker: benannte Volumes ohne Container",
@@ -545,7 +547,7 @@ mod tests {
         for c in &cats {
             assert!(SAFETY_ORDER.contains(&c.safety), "{}", c.key);
             assert!(!c.why.is_empty(), "{}", c.key);
-            assert_eq!(c.is_clean(), c.remover != Remover::None, "{}", c.key);
+            assert_eq!(c.is_clean(), c.safety == Safety::Safe, "{}", c.key);
         }
     }
 
@@ -572,6 +574,10 @@ mod tests {
             run(&["docker", "volume", "rm"], true)
         );
         assert_eq!(k["containers"].hint, "docker rm <container>");
+        assert_eq!(k["unused_images"].remover, run(&["docker", "rmi"], true));
+        assert_eq!(k["containers"].remover, run(&["docker", "rm"], true));
+        assert_eq!(k["stopped_images"].remover, Remover::None);
+        assert!(!k["stopped_images"].selectable());
     }
 
     #[test]

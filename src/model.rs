@@ -115,6 +115,20 @@ impl Category {
         self.safety == Safety::Safe
     }
 
+    /// Can be ticked in the TUI: GEFAHRLOS, or PRÜFEN with a remover.
+    pub fn selectable(&self) -> bool {
+        match self.safety {
+            Safety::Safe => true,
+            Safety::Check => self.remover != Remover::None,
+            Safety::Data | Safety::Info => false,
+        }
+    }
+
+    /// The remover takes no IDs, so the category is removed as a whole or not at all.
+    pub fn all_or_nothing(&self) -> bool {
+        matches!(self.remover, Remover::Run { with_ids: false, .. })
+    }
+
     /// Items by size, largest first.
     pub fn sorted(mut self) -> Self {
         self.items.sort_by_key(|i| std::cmp::Reverse(i.size));
@@ -173,5 +187,29 @@ mod tests {
         assert!(!c(run(false)).needs_sudo());
         assert!(c(Remover::SnapRevisions).needs_sudo());
         assert!(!c(Remover::BuildDirs).needs_sudo());
+    }
+
+    #[test]
+    fn selectable_levels() {
+        let c = |s, r| Category::new("k", "T", "/", s, "w").remover(r);
+        assert!(c(Safety::Safe, Remover::None).selectable());
+        assert!(c(Safety::Check, Remover::BuildDirs).selectable());
+        assert!(!c(Safety::Check, Remover::None).selectable());
+        assert!(!c(Safety::Data, Remover::BuildDirs).selectable());
+        assert!(!c(Safety::Info, Remover::BuildDirs).selectable());
+    }
+
+    #[test]
+    fn all_or_nothing_only_for_idless_run() {
+        let c = |r| Category::new("k", "T", "/", Safety::Safe, "w").remover(r);
+        let run = |with_ids| Remover::Run {
+            argv: vec!["x".into()],
+            with_ids,
+            sudo: false,
+        };
+        assert!(c(run(false)).all_or_nothing());
+        assert!(!c(run(true)).all_or_nothing());
+        assert!(!c(Remover::BuildDirs).all_or_nothing());
+        assert!(!c(Remover::None).all_or_nothing());
     }
 }

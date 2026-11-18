@@ -442,6 +442,29 @@ mod tests {
     }
 
     #[test]
+    fn check_categories_with_remover_are_not_cleaned() {
+        let c = cat(
+            "containers",
+            Safety::Check,
+            run(&["docker", "rm"], true, false),
+            &["x"],
+        );
+        let sel = Selection::all(vec![c]);
+        assert!(sel.todo.is_empty());
+        let mut runner = FakeRunner::default();
+        report_of(
+            vec![cat(
+                "containers",
+                Safety::Check,
+                run(&["docker", "rm"], true, false),
+                &["x"],
+            )],
+            &mut runner,
+        );
+        assert!(runner.calls.is_empty());
+    }
+
+    #[test]
     fn exit_codes() {
         let codes = [
             (Outcome::Done, 0),
