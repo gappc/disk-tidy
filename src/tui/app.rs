@@ -738,4 +738,4 @@ impl App {
 
 #[cfg(test)]
 #[path = "app_tests.rs"]
-mod tests;
+pub(crate) mod tests;

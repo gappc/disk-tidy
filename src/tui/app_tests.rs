@@ -2,7 +2,7 @@ use super::*;
 use crate::clean::Report;
 use crate::model::{Item, Remover};
 
-fn usage(_: &Path) -> Usage {
+pub(crate) fn usage(_: &Path) -> Usage {
     Usage {
         total: 2000,
         free: 1000,
@@ -10,7 +10,7 @@ fn usage(_: &Path) -> Usage {
     }
 }
 
-fn mount(p: &Path) -> PathBuf {
+pub(crate) fn mount(p: &Path) -> PathBuf {
     if p.starts_with("/home") {
         PathBuf::from("/home")
     } else {
@@ -18,7 +18,13 @@ fn mount(p: &Path) -> PathBuf {
     }
 }
 
-fn cat(key: &str, path: &str, safety: Safety, remover: Remover, items: &[(&str, u64)]) -> Category {
+pub(crate) fn cat(
+    key: &str,
+    path: &str,
+    safety: Safety,
+    remover: Remover,
+    items: &[(&str, u64)],
+) -> Category {
     let mut c = Category::new(key, &format!("Titel {key}"), path, safety, "warum")
         .remover(remover)
         .hint("befehl");
@@ -35,7 +41,7 @@ fn cat(key: &str, path: &str, safety: Safety, remover: Remover, items: &[(&str, 
     c
 }
 
-fn run(with_ids: bool) -> Remover {
+pub(crate) fn run(with_ids: bool) -> Remover {
     Remover::Run {
         argv: vec!["docker".into(), "x".into()],
         with_ids,
@@ -43,7 +49,7 @@ fn run(with_ids: bool) -> Remover {
     }
 }
 
-fn cats() -> Vec<Category> {
+pub(crate) fn cats() -> Vec<Category> {
     vec![
         cat(
             "trash",
@@ -84,20 +90,20 @@ fn cats() -> Vec<Category> {
     ]
 }
 
-fn scanning() -> App {
+pub(crate) fn scanning() -> App {
     let mut app = App::new(usage, mount);
     app.on_scan(ScanEvent::Started("docker".into()));
     app.on_scan(ScanEvent::Done("docker".into(), cats()));
     app
 }
 
-fn app() -> App {
+pub(crate) fn app() -> App {
     let mut app = scanning();
     app.on_scan(ScanEvent::Finished);
     app
 }
 
-fn keys(app: &mut App, keys: &[Key]) -> Action {
+pub(crate) fn keys(app: &mut App, keys: &[Key]) -> Action {
     let mut last = Action::None;
     for k in keys {
         last = app.on_key(*k);
@@ -105,11 +111,11 @@ fn keys(app: &mut App, keys: &[Key]) -> Action {
     last
 }
 
-fn find<'a>(app: &'a App, key: &str) -> &'a Category {
+pub(crate) fn find<'a>(app: &'a App, key: &str) -> &'a Category {
     app.all_categories().iter().find(|c| c.key == key).unwrap()
 }
 
-fn item<'a>(app: &'a App, key: &str, id: &str) -> (&'a Category, &'a Item) {
+pub(crate) fn item<'a>(app: &'a App, key: &str, id: &str) -> (&'a Category, &'a Item) {
     let c = find(app, key);
     (c, c.items.iter().find(|i| i.id == id).unwrap())
 }
