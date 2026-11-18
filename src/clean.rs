@@ -2,6 +2,8 @@
 use std::io::{BufRead, Write};
 use std::path::Path;
 
+use serde::Serialize;
+
 use crate::model::{Category, Remover};
 use crate::modules::projects::remove_build_dirs;
 use crate::modules::trash::remove_entries;
@@ -9,19 +11,123 @@ use crate::partition::Usage;
 use crate::render::{Style, render_clean_summary};
 use crate::runner::Runner;
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Outcome {
     Done,
+    Nothing,
     Aborted,
     DoneWithErrors,
+    DoneSkippedSudo,
+    DonePartial,
+    Error,
 }
 
 impl Outcome {
     pub fn exit_code(&self) -> u8 {
         match self {
-            Outcome::Done => 0,
+            Outcome::Done | Outcome::Nothing => 0,
             Outcome::Aborted => 1,
-            Outcome::DoneWithErrors => 2,
+            Outcome::Error => 2,
+            Outcome::DoneWithErrors => 3,
+            Outcome::DoneSkippedSudo => 4,
+            Outcome::DonePartial => 5,
+        }
+    }
+}
+
+/// What happened to one category.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Status {
+    Removed,
+    Failed,
+    SkippedSudo,
+    /// A plan held only part of a category whose remover takes no IDs.
+    SkippedPartial,
+}
+
+#[derive(Debug, PartialEq, Serialize)]
+pub struct ReportItem {
+    pub id: String,
+    pub size: u64,
+}
+
+#[derive(Debug, PartialEq, Serialize)]
+pub struct CatResult {
+    pub key: String,
+    pub status: Status,
+    pub items: Vec<ReportItem>,
+}
+
+/// Why a plan entry was not removed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Reason {
+    Gone,
+    NotSafe,
+    ModuleFailed,
+}
+
+#[derive(Debug, PartialEq, Serialize)]
+pub struct Dropped {
+    pub key: String,
+    pub id: String,
+    pub reason: Reason,
+}
+
+/// The result of `clean`, printed as JSON with `--json`.
+#[derive(Debug, Serialize)]
+pub struct Report {
+    pub version: u32,
+    pub outcome: Outcome,
+    pub exit_code: u8,
+    /// Sum of the item sizes of removed categories (an estimate, as the preview).
+    pub freed: u64,
+    pub categories: Vec<CatResult>,
+    pub dropped: Vec<Dropped>,
+    pub skipped_sudo: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+impl Report {
+    fn new(outcome: Outcome) -> Self {
+        Report {
+            version: 1,
+            outcome,
+            exit_code: outcome.exit_code(),
+            freed: 0,
+            categories: Vec::new(),
+            dropped: Vec::new(),
+            skipped_sudo: Vec::new(),
+            error: None,
+        }
+    }
+
+    /// A plan file, config or other error before anything ran.
+    pub fn error(msg: String) -> Self {
+        Report {
+            error: Some(msg),
+            ..Report::new(Outcome::Error)
+        }
+    }
+}
+
+/// What `clean` removes: `todo`; `partial` and `dropped` come from a plan and are only reported.
+#[derive(Debug, Default)]
+pub struct Selection {
+    pub todo: Vec<Category>,
+    pub partial: Vec<Category>,
+    pub dropped: Vec<Dropped>,
+}
+
+impl Selection {
+    /// Every GEFAHRLOS category, as interactive `clean` removes.
+    pub fn all(cats: Vec<Category>) -> Self {
+        Selection {
+            todo: cats.into_iter().filter(Category::is_clean).collect(),
+            ..Default::default()
         }
     }
 }
@@ -31,6 +137,8 @@ pub struct CleanOptions<'a> {
     pub assume_yes: bool,
     /// Stdin is a terminal: sudo may ask for a password.
     pub interactive: bool,
+    /// `clean` may ask "Löschen?": stdin is a terminal and the output is not JSON.
+    pub can_prompt: bool,
     pub details: bool,
     pub top: usize,
     pub style: Style,
@@ -76,74 +184,115 @@ pub fn confirm(input: &mut dyn BufRead) -> bool {
     )
 }
 
+fn items_of(c: &Category) -> Vec<ReportItem> {
+    c.items
+        .iter()
+        .map(|i| ReportItem {
+            id: i.id.clone(),
+            size: i.size,
+        })
+        .collect()
+}
+
+/// Shows the summary, asks (unless `assume_yes`), removes `sel.todo` and reports. Text goes to
+/// `out`; only the "cannot ask" message goes to `err`.
 pub fn clean(
-    cats: Vec<Category>,
+    sel: Selection,
     opts: &CleanOptions,
     input: &mut dyn BufRead,
     runner: &mut dyn Runner,
     out: &mut dyn Write,
-) -> Outcome {
+    err: &mut dyn Write,
+) -> Report {
     // Output errors (a closed pipe) must not stop or skip the removal once confirmed.
-    let todo: Vec<Category> = cats.into_iter().filter(Category::is_clean).collect();
+    let Selection { todo, .. } = sel;
     if todo.is_empty() {
         let _ = writeln!(out, "Nichts Sicheres zu löschen.");
-        return Outcome::Done;
+        return Report::new(Outcome::Nothing);
     }
     let summary = render_clean_summary(&todo, opts.details, opts.top, &opts.style, opts.usage);
     let _ = write!(out, "{summary}");
     if !opts.assume_yes {
+        if !opts.can_prompt {
+            let _ = writeln!(err, "Keine Rückfrage möglich: --yes oder --plan angeben.");
+            return Report::new(Outcome::Aborted);
+        }
         let _ = write!(out, "Löschen? [j/N] ");
         let _ = out.flush();
         if !confirm(input) {
             let _ = writeln!(out, "Abgebrochen, nichts gelöscht.");
-            return Outcome::Aborted;
+            return Report::new(Outcome::Aborted);
         }
     }
 
-    let mut ok = true;
-    let mut skipped: Vec<Vec<String>> = Vec::new();
+    let mut report = Report::new(Outcome::Done);
     let mut sudo_ok = None;
     for c in &todo {
         let _ = writeln!(out, "→ {}", c.title);
         let _ = out.flush();
-        match &c.remover {
-            Remover::BuildDirs => ok &= remove_build_dirs(&c.items, out),
-            Remover::Trash { base } => ok &= remove_entries(&c.items, base, out),
-            Remover::None => {}
+        let status = match &c.remover {
+            Remover::BuildDirs | Remover::Trash { .. } => {
+                let ok = match &c.remover {
+                    Remover::Trash { base } => remove_entries(&c.items, base, out),
+                    _ => remove_build_dirs(&c.items, out),
+                };
+                if ok { Status::Removed } else { Status::Failed }
+            }
+            Remover::None => Status::Removed,
             Remover::Run { .. } | Remover::SnapRevisions => {
+                let (mut failed, mut skipped) = (false, false);
                 for cmd in commands_for(c) {
                     if !c.needs_sudo() {
-                        ok &= runner.run(&cmd);
+                        failed |= !runner.run(&cmd);
                     } else if *sudo_ok.get_or_insert_with(|| runner.can_sudo(opts.interactive)) {
-                        ok &= runner.run_sudo(&cmd);
+                        failed |= !runner.run_sudo(&cmd);
                     } else {
-                        skipped.push(cmd);
+                        skipped = true;
+                        report.skipped_sudo.push(format!("sudo {}", cmd.join(" ")));
                     }
                 }
+                match (failed, skipped) {
+                    (true, _) => Status::Failed,
+                    (false, true) => Status::SkippedSudo,
+                    (false, false) => Status::Removed,
+                }
             }
+        };
+        if status == Status::Removed {
+            report.freed += c.total();
         }
+        report.categories.push(CatResult {
+            key: c.key.clone(),
+            status,
+            items: items_of(c),
+        });
     }
 
-    if !skipped.is_empty() {
+    if !report.skipped_sudo.is_empty() {
         let _ = writeln!(out, "\nOhne sudo übersprungen. Selbst ausführen:");
-        for cmd in &skipped {
-            let _ = writeln!(out, "  sudo {}", cmd.join(" "));
+        for cmd in &report.skipped_sudo {
+            let _ = writeln!(out, "  {cmd}");
         }
     }
+    let errors = report.categories.iter().any(|c| c.status == Status::Failed);
     let _ = writeln!(
         out,
         "{}",
-        if ok {
-            "Fertig."
-        } else {
+        if errors {
             "Fertig, mit Fehlern (siehe oben)."
+        } else {
+            "Fertig."
         }
     );
-    if ok {
-        Outcome::Done
-    } else {
+    report.outcome = if errors {
         Outcome::DoneWithErrors
-    }
+    } else if !report.skipped_sudo.is_empty() {
+        Outcome::DoneSkippedSudo
+    } else {
+        Outcome::Done
+    };
+    report.exit_code = report.outcome.exit_code();
+    report
 }
 
 #[cfg(test)]
@@ -164,6 +313,7 @@ mod tests {
         CleanOptions {
             assume_yes,
             interactive: false,
+            can_prompt: true,
             details: false,
             top: 15,
             style: Style { colour: false },
@@ -222,9 +372,114 @@ mod tests {
         input: &str,
         runner: &mut FakeRunner,
     ) -> (Outcome, String) {
-        let mut out = Vec::new();
-        let outcome = clean(cats, opts, &mut input.as_bytes(), runner, &mut out);
-        (outcome, String::from_utf8(out).unwrap())
+        let (report, out, _) = do_clean_full(Selection::all(cats), opts, input, runner);
+        (report.outcome, out)
+    }
+
+    /// Report, stdout text, stderr text.
+    fn do_clean_full(
+        sel: Selection,
+        opts: &CleanOptions,
+        input: &str,
+        runner: &mut FakeRunner,
+    ) -> (Report, String, String) {
+        let (mut out, mut err) = (Vec::new(), Vec::new());
+        let report = clean(sel, opts, &mut input.as_bytes(), runner, &mut out, &mut err);
+        (
+            report,
+            String::from_utf8(out).unwrap(),
+            String::from_utf8(err).unwrap(),
+        )
+    }
+
+    fn report_of(cats: Vec<Category>, runner: &mut FakeRunner) -> Report {
+        do_clean_full(Selection::all(cats), &opts(true), "", runner).0
+    }
+
+    #[test]
+    fn exit_codes() {
+        let codes = [
+            (Outcome::Done, 0),
+            (Outcome::Nothing, 0),
+            (Outcome::Aborted, 1),
+            (Outcome::Error, 2),
+            (Outcome::DoneWithErrors, 3),
+            (Outcome::DoneSkippedSudo, 4),
+            (Outcome::DonePartial, 5),
+        ];
+        for (o, code) in codes {
+            assert_eq!(o.exit_code(), code, "{o:?}");
+        }
+    }
+
+    #[test]
+    fn no_prompt_without_terminal() {
+        let mut r = FakeRunner::default();
+        let o = CleanOptions {
+            can_prompt: false,
+            ..opts(false)
+        };
+        let (report, out, err) = do_clean_full(Selection::all(vec![dangling()]), &o, "j\n", &mut r);
+        assert_eq!(report.outcome, Outcome::Aborted);
+        assert!(r.calls.is_empty());
+        assert!(!out.contains("Löschen?"), "{out}");
+        assert_eq!(err, "Keine Rückfrage möglich: --yes oder --plan angeben.\n");
+    }
+
+    #[test]
+    fn report_lists_removed_and_freed() {
+        let report = report_of(vec![dangling()], &mut FakeRunner::default());
+        assert_eq!(report.outcome, Outcome::Done);
+        assert_eq!(report.freed, 2000);
+        assert_eq!(report.categories.len(), 1);
+        let c = &report.categories[0];
+        assert_eq!((c.key.as_str(), &c.status), ("dangling", &Status::Removed));
+        assert_eq!(
+            c.items.iter().map(|i| i.id.as_str()).collect::<Vec<_>>(),
+            ["a", "b"]
+        );
+    }
+
+    #[test]
+    fn failed_command_gives_exit_3() {
+        let mut r = FakeRunner::default();
+        r.fail.insert("docker rmi a b".into());
+        let report = report_of(vec![dangling()], &mut r);
+        assert_eq!(report.categories[0].status, Status::Failed);
+        assert_eq!(report.outcome, Outcome::DoneWithErrors);
+        assert_eq!(report.exit_code, 3);
+        assert_eq!(report.freed, 0);
+    }
+
+    #[test]
+    fn skipped_sudo_gives_exit_4() {
+        let (report, out, _) = do_clean_full(
+            Selection::all(vec![journal()]),
+            &opts(true),
+            "",
+            &mut FakeRunner::default(),
+        );
+        assert_eq!(report.categories[0].status, Status::SkippedSudo);
+        assert_eq!(report.skipped_sudo, ["sudo journalctl --vacuum-size=500M"]);
+        assert_eq!(report.outcome, Outcome::DoneSkippedSudo);
+        assert!(out.contains("Ohne sudo übersprungen"), "{out}");
+    }
+
+    #[test]
+    fn report_json_shape() {
+        let report = report_of(vec![dangling()], &mut FakeRunner::default());
+        let v = serde_json::to_value(&report).unwrap();
+        assert_eq!(v["version"], 1);
+        assert_eq!(v["outcome"], "done");
+        assert_eq!(v["exit_code"], 0);
+        assert_eq!(v["freed"], 2000);
+        assert_eq!(v["categories"][0]["status"], "removed");
+        assert!(v.get("error").is_none());
+        let e = serde_json::to_value(Report::error("x".into())).unwrap();
+        assert_eq!(
+            (&e["outcome"], &e["exit_code"], &e["error"]),
+            (&"error".into(), &2.into(), &"x".into())
+        );
     }
 
     #[test]
@@ -301,7 +556,7 @@ mod tests {
         let mut r = FakeRunner::default();
         let (outcome, text) = do_clean(vec![journal()], &opts(true), "", &mut r);
         assert!(r.calls.is_empty());
-        assert_eq!(outcome, Outcome::Done);
+        assert_eq!(outcome, Outcome::DoneSkippedSudo);
         assert!(text.contains("\nOhne sudo übersprungen. Selbst ausführen:\n  sudo journalctl --vacuum-size=500M\nFertig.\n"), "{text}");
     }
 
@@ -352,7 +607,7 @@ mod tests {
         let (outcome, text) = do_clean(vec![c], &opts(false), "", &mut r);
         assert_eq!(
             (outcome, text.as_str()),
-            (Outcome::Done, "Nichts Sicheres zu löschen.\n")
+            (Outcome::Nothing, "Nichts Sicheres zu löschen.\n")
         );
     }
 

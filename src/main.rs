@@ -17,7 +17,7 @@ use std::process::ExitCode;
 
 use clap::{CommandFactory, Parser, ValueEnum, error::ErrorKind};
 
-use clean::{CleanOptions, Outcome};
+use clean::{CleanOptions, Selection};
 use modules::MODULES;
 use render::Style;
 use runner::SystemRunner;
@@ -99,19 +99,21 @@ fn main() -> ExitCode {
     let opts = CleanOptions {
         assume_yes: cli.yes,
         interactive: io::stdin().is_terminal(),
+        can_prompt: io::stdin().is_terminal(),
         details: cli.details,
         top: cli.top,
         style,
         usage: &usage,
     };
-    let outcome: Outcome = clean::clean(
-        cats,
+    let report = clean::clean(
+        Selection::all(cats),
         &opts,
         &mut io::stdin().lock(),
         &mut runner,
         &mut io::stdout(),
+        &mut io::stderr(),
     );
-    ExitCode::from(outcome.exit_code())
+    ExitCode::from(report.exit_code)
 }
 
 #[cfg(test)]

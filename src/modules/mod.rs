@@ -52,15 +52,12 @@ pub fn collect_all(cfg: &Config, only: &[String], runner: &mut dyn Runner) -> Sc
             _ => unreachable!("MODULES lists every module"),
         };
         match found {
-            Ok(found) => cats.extend(
-                found
-                    .into_iter()
-                    .filter(|c| !c.items.is_empty())
-                    .map(|mut c| {
-                        c.module = name.into();
-                        c
-                    }),
-            ),
+            Ok(found) => cats.extend(found.into_iter().filter(|c| !c.items.is_empty()).map(
+                |mut c| {
+                    c.module = name.into();
+                    c
+                },
+            )),
             Err(note) => {
                 eprintln!("Hinweis ({name}): {note}");
                 failed.push(name.to_string());

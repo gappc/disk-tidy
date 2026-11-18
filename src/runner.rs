@@ -72,6 +72,8 @@ pub struct FakeRunner {
     /// Every run/run_sudo call; sudo calls start with "sudo".
     pub calls: Vec<Vec<String>>,
     pub sudo_ok: bool,
+    /// Commands (argv joined by " ", without "sudo") that fail.
+    pub fail: std::collections::HashSet<String>,
 }
 
 #[cfg(test)]
@@ -82,14 +84,14 @@ impl Runner for FakeRunner {
 
     fn run(&mut self, argv: &[String]) -> bool {
         self.calls.push(argv.to_vec());
-        true
+        !self.fail.contains(&argv.join(" "))
     }
 
     fn run_sudo(&mut self, argv: &[String]) -> bool {
         let mut call = vec!["sudo".to_string()];
         call.extend_from_slice(argv);
         self.calls.push(call);
-        true
+        !self.fail.contains(&argv.join(" "))
     }
 
     fn can_sudo(&mut self, interactive: bool) -> bool {
