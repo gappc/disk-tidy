@@ -6,7 +6,7 @@ use anyhow::{Context, bail};
 use serde::{Deserialize, Serialize};
 
 use crate::clean::{Dropped, Reason, Selection};
-use crate::model::{Remover, SAFETY_ORDER, Safety};
+use crate::model::{Category, SAFETY_ORDER, Safety};
 use crate::modules::Scan;
 use crate::partition::Usage;
 use crate::render::by_partition;
@@ -124,17 +124,19 @@ pub fn build_plan(
     (plan, left_out)
 }
 
-/// What `clean --plan` may remove: the items of GEFAHRLOS categories of the fresh scan that the
-/// plan lists. The plan's own `safety` decides nothing; it only selects which unmatched plan items
-/// are reported as dropped (those it marked `safe`).
-pub fn select(plan: &Plan, scan: &Scan) -> Selection {
+/// What may be removed: the items the plan lists, in categories of the fresh scan whose level is
+/// in `levels` and that can be removed (`Category::selectable`). `clean --plan` passes GEFAHRLOS
+/// only; the TUI also PRÜFEN. The plan's own `safety` decides nothing; it only selects which
+/// unmatched plan items are reported as dropped (those whose level is in `levels`).
+pub fn select(plan: &Plan, scan: &Scan, levels: &[Safety]) -> Selection {
+    let eligible = |c: &Category| levels.contains(&c.safety) && c.selectable();
     let listed: HashSet<(&str, &str)> = plan
         .categories
         .iter()
         .flat_map(|c| c.items.iter().map(|i| (c.key.as_str(), i.id.as_str())))
         .collect();
     let mut sel = Selection::default();
-    for c in scan.cats.iter().filter(|c| c.is_clean()) {
+    for c in scan.cats.iter().filter(|c| eligible(c)) {
         let mut kept = c.clone();
         // A non-UTF-8 path is never in a plan; its lossy id could match a real name.
         kept.items.retain(|i| {
@@ -144,14 +146,7 @@ pub fn select(plan: &Plan, scan: &Scan) -> Selection {
         if kept.items.is_empty() {
             continue;
         }
-        let idless = matches!(
-            c.remover,
-            Remover::Run {
-                with_ids: false,
-                ..
-            }
-        );
-        if idless && kept.items.len() != c.items.len() {
+        if c.all_or_nothing() && kept.items.len() != c.items.len() {
             sel.partial.push(kept);
         } else {
             sel.todo.push(kept);
@@ -164,21 +159,28 @@ pub fn select(plan: &Plan, scan: &Scan) -> Selection {
         .chain(&sel.partial)
         .flat_map(|c| c.items.iter().map(|i| (c.key.as_str(), i.id.as_str())))
         .collect();
-    let unsafe_ids: HashSet<&str> = scan
+    // Where each id is now; an id found elsewhere than under its plan key, or in a category that
+    // may not be removed, is no longer what the plan meant.
+    let now_at: Vec<(&str, &str, bool)> = scan
         .cats
         .iter()
-        .filter(|c| !c.is_clean())
-        .flat_map(|c| c.items.iter().map(|i| i.id.as_str()))
+        .flat_map(|c| {
+            let ok = eligible(c);
+            c.items.iter().map(move |i| (c.key.as_str(), i.id.as_str(), ok))
+        })
         .collect();
     let mut dropped = Vec::new();
-    for c in plan.categories.iter().filter(|c| c.safety == Safety::Safe) {
+    for c in plan.categories.iter().filter(|c| levels.contains(&c.safety)) {
         for i in &c.items {
             if taken.contains(&(c.key.as_str(), i.id.as_str())) {
                 continue;
             }
             let reason = if scan.failed.contains(&c.module) {
                 Reason::ModuleFailed
-            } else if unsafe_ids.contains(i.id.as_str()) {
+            } else if now_at
+                .iter()
+                .any(|&(key, id, ok)| id == i.id && (key != c.key || !ok))
+            {
                 Reason::NotSafe
             } else {
                 Reason::Gone
@@ -210,7 +212,7 @@ pub fn parse_plan(text: &str) -> anyhow::Result<Plan> {
 mod tests {
     use super::*;
     use crate::clean::{Dropped, Reason};
-    use crate::model::{Category, Item, Remover, Safety};
+    use crate::model::{Item, Remover};
     use crate::modules::Scan;
     use crate::partition::Usage;
     use std::ffi::OsString;
@@ -333,6 +335,9 @@ mod tests {
         assert!(parse_plan(text).unwrap().categories.is_empty());
     }
 
+    const SAFE: &[Safety] = &[Safety::Safe];
+    const TUI: &[Safety] = &[Safety::Safe, Safety::Check];
+
     fn plan_of(cats: Vec<Category>) -> Plan {
         build_plan(&scan(cats), &modules(), 0, &usage).0
     }
@@ -378,7 +383,7 @@ mod tests {
             Safety::Safe,
             vec![item("a", 1), item("c", 1)],
         )]);
-        let sel = select(&plan, &now);
+        let sel = select(&plan, &now, SAFE);
         assert_eq!(ids(&sel.todo), [("trash", vec!["a"])]);
         assert!(sel.partial.is_empty());
         assert_eq!(sel.dropped, [dropped("trash", "b", Reason::Gone)]);
@@ -389,7 +394,7 @@ mod tests {
         let mut plan = plan_of(vec![cat("build_active", Safety::Check, vec![item("x", 1)])]);
         plan.categories[0].safety = Safety::Safe;
         let now = scan(vec![cat("build_active", Safety::Check, vec![item("x", 1)])]);
-        let sel = select(&plan, &now);
+        let sel = select(&plan, &now, SAFE);
         assert!(sel.todo.is_empty());
         assert_eq!(sel.dropped, [dropped("build_active", "x", Reason::NotSafe)]);
     }
@@ -398,7 +403,7 @@ mod tests {
     fn moved_to_active_is_not_safe() {
         let plan = plan_of(vec![cat("build_stale", Safety::Safe, vec![item("x", 1)])]);
         let now = scan(vec![cat("build_active", Safety::Check, vec![item("x", 1)])]);
-        let sel = select(&plan, &now);
+        let sel = select(&plan, &now, SAFE);
         assert!(sel.todo.is_empty());
         assert_eq!(sel.dropped, [dropped("build_stale", "x", Reason::NotSafe)]);
     }
@@ -406,12 +411,12 @@ mod tests {
     #[test]
     fn idless_category_needs_every_item() {
         let now = scan(vec![idless(vec![item("c1", 1), item("c2", 1)])]);
-        let sel = select(&plan_of(vec![idless(vec![item("c1", 1)])]), &now);
+        let sel = select(&plan_of(vec![idless(vec![item("c1", 1)])]), &now, SAFE);
         assert!(sel.todo.is_empty());
         assert_eq!(ids(&sel.partial), [("build_cache", vec!["c1"])]);
         assert!(sel.dropped.is_empty());
         let both = plan_of(vec![idless(vec![item("c1", 1), item("c2", 1)])]);
-        let sel = select(&both, &now);
+        let sel = select(&both, &now, SAFE);
         assert_eq!(ids(&sel.todo), [("build_cache", vec!["c1", "c2"])]);
         assert!(sel.partial.is_empty());
     }
@@ -423,7 +428,7 @@ mod tests {
             cats: Vec::new(),
             failed: vec!["docker".into()],
         };
-        let sel = select(&plan, &now);
+        let sel = select(&plan, &now, SAFE);
         assert_eq!(
             sel.dropped,
             [dropped("build_cache", "c1", Reason::ModuleFailed)]
@@ -436,7 +441,7 @@ mod tests {
             cat("build_active", Safety::Check, vec![item("x", 1)]),
             cat("show", Safety::Info, vec![item("y", 1)]),
         ]);
-        let sel = select(&plan, &scan(Vec::new()));
+        let sel = select(&plan, &scan(Vec::new()), SAFE);
         assert!(sel.todo.is_empty() && sel.partial.is_empty() && sel.dropped.is_empty());
     }
 
@@ -447,10 +452,43 @@ mod tests {
         twin.path = Some(PathBuf::from(OsString::from_vec(b"/t/a\xff".to_vec())));
         let now = scan(vec![cat("trash", Safety::Safe, vec![plain.clone(), twin])]);
         let plan = plan_of(vec![cat("trash", Safety::Safe, vec![plain])]);
-        let sel = select(&plan, &now);
+        let sel = select(&plan, &now, SAFE);
         assert_eq!(sel.todo.len(), 1);
         assert_eq!(sel.todo[0].items.len(), 1);
         assert!(sel.todo[0].items[0].path.is_none());
+    }
+
+    #[test]
+    fn check_level_allowed_for_tui() {
+        let active = || {
+            cat("build_active", Safety::Check, vec![item("x", 1)]).remover(Remover::BuildDirs)
+        };
+        let plan = plan_of(vec![active()]);
+        let sel = select(&plan, &scan(vec![active()]), TUI);
+        assert_eq!(ids(&sel.todo), [("build_active", vec!["x"])]);
+        assert!(sel.dropped.is_empty());
+    }
+
+    #[test]
+    fn ticked_safe_now_check_is_dropped() {
+        let plan = plan_of(vec![
+            cat("build_stale", Safety::Safe, vec![item("x", 1)]).remover(Remover::BuildDirs),
+        ]);
+        let now = scan(vec![
+            cat("build_active", Safety::Check, vec![item("x", 1)]).remover(Remover::BuildDirs),
+        ]);
+        let sel = select(&plan, &now, TUI);
+        assert!(sel.todo.is_empty());
+        assert_eq!(sel.dropped, [dropped("build_stale", "x", Reason::NotSafe)]);
+    }
+
+    #[test]
+    fn unselectable_check_never_selected() {
+        let stopped = || cat("stopped_images", Safety::Check, vec![item("y", 1)]);
+        let plan = plan_of(vec![stopped()]);
+        let sel = select(&plan, &scan(vec![stopped()]), TUI);
+        assert!(sel.todo.is_empty());
+        assert_eq!(sel.dropped, [dropped("stopped_images", "y", Reason::NotSafe)]);
     }
 
     #[test]
@@ -460,6 +498,6 @@ mod tests {
         let plan = parse_plan(text).unwrap();
         assert_eq!(plan.categories[0].items[0].id, "/t/x");
         let now = scan(vec![cat("trash", Safety::Safe, vec![item("/t/x", 1)])]);
-        assert_eq!(ids(&select(&plan, &now).todo), [("trash", vec!["/t/x"])]);
+        assert_eq!(ids(&select(&plan, &now, SAFE).todo), [("trash", vec!["/t/x"])]);
     }
 }

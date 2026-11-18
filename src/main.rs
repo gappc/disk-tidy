@@ -203,7 +203,7 @@ fn main() -> ExitCode {
         Command::Clean => {}
     }
     let selection = match &plan {
-        Some(p) => plan::select(p, &scan),
+        Some(p) => plan::select(p, &scan, &[model::Safety::Safe]),
         None => Selection::all(scan.cats),
     };
     let opts = CleanOptions {
