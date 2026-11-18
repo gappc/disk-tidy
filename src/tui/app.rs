@@ -488,6 +488,9 @@ impl App {
                 return Action::None;
             }
             Screen::Report => {
+                if key == Key::Char('q') {
+                    return Action::Quit;
+                }
                 self.rescan_requested = true;
                 return Action::None;
             }

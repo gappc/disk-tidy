@@ -403,3 +403,12 @@ fn finished_fills_categories_without_progress() {
     let p = app.progress.iter().find(|p| p.0 == "build_cache").unwrap();
     assert_eq!(p.2.as_ref().unwrap().status, Status::SkippedPartial);
 }
+
+#[test]
+fn q_on_report_quits() {
+    let mut app = app();
+    keys(&mut app, &[Key::Char('d'), Key::Enter, Key::Char('j')]);
+    app.on_delete(DeleteEvent::Finished(Report::error("x".into())));
+    assert_eq!(app.on_key(Key::Char('q')), Action::Quit);
+    assert!(!app.rescan_requested);
+}

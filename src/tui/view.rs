@@ -524,7 +524,7 @@ fn progress(frame: &mut Frame, app: &App, p: &Paint, area: Rect) -> (String, Str
     match app.screen {
         Screen::Report => (
             format!(" Bericht · {finished} von {n} fertig"),
-            " Taste drücken: neu scannen".into(),
+            " q Ende  · andere Taste: neu scannen".into(),
         ),
         _ => (
             format!(" Löschen · {finished} von {n} fertig"),

@@ -106,9 +106,13 @@ fn ask_sudo() {
 
 pub fn run(cfg: &Config, colour: bool) -> anyhow::Result<()> {
     let previous = std::panic::take_hook();
+    // Only a panic of the UI thread ends the TUI. A worker panic is caught by `worker::guarded`
+    // and reported in the UI; printing it would write into the screen.
     std::panic::set_hook(Box::new(move |info| {
-        restore();
-        previous(info);
+        if std::thread::current().name() == Some("main") {
+            restore();
+            previous(info);
+        }
     }));
     let mut guard = Guard::new()?;
     let mut app = App::new(disk_usage, mount_point);
