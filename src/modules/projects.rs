@@ -154,15 +154,18 @@ pub fn classify_dirs(
             .entry(project.clone())
             .or_insert_with(|| last_change(&project, Some(cutoff)));
         let days = now.duration_since(last).map_or(0, |d| d.as_secs() / DAY);
-        let label = match b.strip_prefix(&home) {
+        let short = |p: &Path| match p.strip_prefix(&home) {
             Ok(rel) => format!("~/{}", rel.display()),
-            Err(_) => b.display().to_string(),
+            Err(_) => p.display().to_string(),
         };
+        let label = short(&b);
         let item = Item {
             size: sizes(&b),
             id: b.display().to_string(),
             label: format!("{label:72}  zuletzt geändert vor {days} Tagen"),
             path: Some(b),
+            modified: last.duration_since(UNIX_EPOCH).ok().map(|d| d.as_secs()),
+            facts: vec![("Projekt".into(), short(&project))],
         };
         if last <= cutoff {
             &mut stale
@@ -318,6 +321,18 @@ mod tests {
     }
 
     #[test]
+    fn stale_item_has_project_fact() {
+        let (dir, cfg) = tree();
+        let cats = collect(&cfg, SystemTime::now());
+        let item = &cats[0].items[0];
+        let project = dir.path().join("old").display().to_string();
+        assert_eq!(item.facts, [("Projekt".to_string(), project)]);
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        let age = now - item.modified.unwrap();
+        assert!((60 * DAY - 10..=60 * DAY + 10).contains(&age), "{age}");
+    }
+
+    #[test]
     fn label_relative_to_home() {
         let home = crate::config::home();
         let b = home.join("p/x/node_modules");
@@ -351,6 +366,7 @@ mod tests {
             id: docs.display().to_string(),
             label: "docs".into(),
             path: None,
+            ..Default::default()
         };
         let mut out = Vec::new();
         assert!(!remove_build_dirs(&[item], &mut out));
@@ -407,6 +423,7 @@ mod tests {
             id: link.display().to_string(),
             label: String::new(),
             path: None,
+            ..Default::default()
         };
         assert!(!remove_build_dirs(&[item], &mut Vec::new()));
         assert!(r.join("fresh/target/debug/bin").exists());

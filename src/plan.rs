@@ -231,6 +231,7 @@ mod tests {
             id: id.into(),
             label: format!("label {id}"),
             path: None,
+            ..Default::default()
         }
     }
 

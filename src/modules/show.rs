@@ -30,6 +30,7 @@ pub fn collect(cfg: &ShowConfig) -> Vec<Category> {
             id: p.clone(),
             label: tilde(p),
             path: None,
+            ..Default::default()
         })
         .collect();
     vec![cat.sorted()]

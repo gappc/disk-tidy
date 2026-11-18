@@ -234,6 +234,7 @@ mod tests {
             id: key.into(),
             label: format!("eintrag {key}"),
             path: None,
+            ..Default::default()
         }];
         c
     }

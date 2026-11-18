@@ -380,6 +380,7 @@ mod tests {
                 id: id.to_string(),
                 label: id.to_string(),
                 path: None,
+                ..Default::default()
             })
             .collect();
         c

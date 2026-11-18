@@ -19,7 +19,7 @@ pub enum Safety {
 
 pub const SAFETY_ORDER: [Safety; 4] = [Safety::Safe, Safety::Check, Safety::Data, Safety::Info];
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct Item {
     pub size: u64,
     /// What the remover acts on: an ID, a name or a path.
@@ -29,6 +29,13 @@ pub struct Item {
     /// bytes that are not UTF-8.
     #[serde(skip)]
     pub path: Option<PathBuf>,
+    /// Unix seconds of what makes the entry old: last project change, image creation,
+    /// last cache use, deletion into the trash. Shown in the TUI only.
+    #[serde(skip)]
+    pub modified: Option<u64>,
+    /// Short facts for the TUI's details popup, e.g. ("Projekt", "~/p/x").
+    #[serde(skip)]
+    pub facts: Vec<(String, String)>,
 }
 
 impl Item {
@@ -153,6 +160,7 @@ mod tests {
             id: size.to_string(),
             label: String::new(),
             path: None,
+            ..Default::default()
         }
     }
 

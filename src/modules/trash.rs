@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use crate::config::home;
 use crate::model::{Category, Item, Remover, Safety};
 use crate::size::dir_sizes;
+use crate::time::parse_timestamp;
 
 pub fn trash_dir() -> PathBuf {
     home().join(".local/share/Trash")
@@ -27,15 +28,26 @@ pub fn collect(base: &Path) -> Vec<Category> {
         let paths: Vec<PathBuf> = entries.iter().map(|e| e.path()).collect();
         let sizes = dir_sizes(&paths.iter().map(PathBuf::as_path).collect::<Vec<_>>());
         for ((e, path), size) in entries.iter().zip(paths).zip(sizes) {
+            let mut info = e.file_name();
+            info.push(".trashinfo");
             cat.items.push(Item {
                 size,
                 id: path.display().to_string(),
                 label: e.file_name().to_string_lossy().into_owned(),
                 path: Some(path),
+                modified: deletion_date(&base.join("info").join(info)),
+                ..Default::default()
             });
         }
     }
     vec![cat.sorted()]
+}
+
+/// `DeletionDate=` of a `.trashinfo` file, as Unix seconds.
+fn deletion_date(info: &Path) -> Option<u64> {
+    let text = fs::read_to_string(info).ok()?;
+    let date = text.lines().find_map(|l| l.strip_prefix("DeletionDate="))?;
+    parse_timestamp(date.trim())
 }
 
 /// Deletes direct children of base/files and their base/info/<name>.trashinfo; refuses others.
@@ -129,6 +141,21 @@ mod tests {
     }
 
     #[test]
+    fn deletion_date_is_modified() {
+        let dir = trash();
+        let b = dir.path();
+        touch(
+            &b.join("info/a.txt.trashinfo"),
+            b"[Trash Info]\nPath=/home/u/a.txt\nDeletionDate=2026-10-08T12:00:00\n",
+        );
+        let cats = collect(b);
+        let a = cats[0].items.iter().find(|i| i.label == "a.txt").unwrap();
+        assert_eq!(a.modified, Some(1791460800));
+        let d = cats[0].items.iter().find(|i| i.label == "dir").unwrap();
+        assert_eq!(d.modified, None); // info file without a date
+    }
+
+    #[test]
     fn refuses_path_outside_trash() {
         let dir = trash();
         let outside = dir.path().join("keep.txt");
@@ -138,6 +165,7 @@ mod tests {
             id: outside.display().to_string(),
             label: String::new(),
             path: None,
+            ..Default::default()
         };
         assert!(!remove_entries(&[item], dir.path(), &mut Vec::new()));
         assert!(outside.exists());
@@ -152,6 +180,7 @@ mod tests {
             id: sneaky.display().to_string(),
             label: String::new(),
             path: None,
+            ..Default::default()
         };
         assert!(!remove_entries(&[item], dir.path(), &mut Vec::new()));
         assert!(dir.path().join("files/a.txt").exists());
@@ -216,6 +245,7 @@ mod tests {
             id: b.join("keep.txt").display().to_string(),
             label: String::new(),
             path: None,
+            ..Default::default()
         };
         let mut items = vec![outside];
         items.extend(collect(b)[0].items.clone());

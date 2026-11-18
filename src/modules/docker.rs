@@ -8,6 +8,7 @@ use crate::config::DockerConfig;
 use crate::model::{Category, Item, Remover, Safety};
 use crate::runner::Runner;
 use crate::size::parse_size;
+use crate::time::parse_timestamp;
 
 /// `docker system df -v --format json`; every value is a string.
 #[derive(Deserialize, Default, Debug)]
@@ -37,6 +38,7 @@ pub struct DfContainer {
     pub state: String,
     pub status: String,
     pub size: String,
+    pub created_at: String,
 }
 
 #[derive(Deserialize, Default, Debug)]
@@ -49,6 +51,7 @@ pub struct DfImage {
     pub containers: String,
     pub unique_size: String,
     pub created_since: String,
+    pub created_at: String,
 }
 
 #[derive(Deserialize, Default, Debug)]
@@ -68,6 +71,7 @@ pub struct DfCache {
     pub size: String,
     pub shared: String,
     pub last_used_since: String,
+    pub last_used_at: String,
     pub description: String,
 }
 
@@ -246,6 +250,11 @@ pub fn classify(df: &DockerDf, cfg: &DockerConfig, root: &Path) -> Vec<Category>
             id: c.id.clone(),
             label: format!("{:40}  {:35}  {}", c.names, c.image, c.status),
             path: None,
+            modified: parse_timestamp(&c.created_at),
+            facts: vec![
+                ("Image".into(), c.image.clone()),
+                ("Status".into(), c.status.clone()),
+            ],
         });
     }
 
@@ -276,11 +285,19 @@ pub fn classify(df: &DockerDf, cfg: &DockerConfig, root: &Path) -> Vec<Category>
         } else {
             DANGLING
         };
+        let facts = if named {
+            let name = if i.tag != "<none>" { &id } else { &i.repository };
+            vec![("Image".into(), name.clone())]
+        } else {
+            Vec::new()
+        };
         cats[key].items.push(Item {
             size: parse_size(&i.unique_size),
             id,
             label,
             path: None,
+            modified: parse_timestamp(&i.created_at),
+            facts,
         });
     }
 
@@ -295,6 +312,8 @@ pub fn classify(df: &DockerDf, cfg: &DockerConfig, root: &Path) -> Vec<Category>
                 chars(&b.description, 0, 70)
             ),
             path: None,
+            modified: parse_timestamp(&b.last_used_at),
+            ..Default::default()
         });
     }
 
@@ -320,6 +339,7 @@ pub fn classify(df: &DockerDf, cfg: &DockerConfig, root: &Path) -> Vec<Category>
             id: v.name.clone(),
             label: v.name.clone(),
             path: None,
+            ..Default::default()
         });
     }
 
@@ -364,6 +384,7 @@ pub(crate) mod fixture {
             containers: containers.into(),
             unique_size: unique.into(),
             created_since: "1 day ago".into(),
+            ..Default::default()
         }
     }
 
@@ -375,6 +396,7 @@ pub(crate) mod fixture {
             state: state.into(),
             status: "Exited (0)".into(),
             size: size.into(),
+            ..Default::default()
         }
     }
 
@@ -394,6 +416,7 @@ pub(crate) mod fixture {
             shared: "false".into(),
             last_used_since: "1 week ago".into(),
             description: "RUN x".into(),
+            ..Default::default()
         }
     }
 
@@ -617,6 +640,24 @@ mod tests {
     }
 
     #[test]
+    fn image_and_container_facts() {
+        let json = r#"{"Images":[{"Containers":"0","CreatedAt":"2026-10-08 12:00:00 +0200 CEST","ID":"sha256:e4","Repository":"node","Tag":"22","UniqueSize":"1GB"}],
+          "Containers":[{"ID":"f8","Names":"x","Image":"img:1","State":"exited","Status":"Exited (1)","Size":"1kB","CreatedAt":"2026-10-08 12:00:00 +0200 CEST"}],
+          "BuildCache":[{"ID":"llh","InUse":"false","LastUsedAt":"2026-10-08 10:00:00.5 +0000 UTC","Size":"117MB"}]}"#;
+        let df: DockerDf = serde_json::from_str(json).unwrap();
+        let cats = classify(&df, &DockerConfig::default(), Path::new("/"));
+        let k = by_key(&cats);
+        let s = |a: &str, b: &str| (a.to_string(), b.to_string());
+        let img = &k["unused_images"].items[0];
+        assert_eq!(img.modified, Some(1791453600));
+        assert_eq!(img.facts, [s("Image", "node:22")]);
+        let c = &k["containers"].items[0];
+        assert_eq!(c.modified, Some(1791453600));
+        assert_eq!(c.facts, [s("Image", "img:1"), s("Status", "Exited (1)")]);
+        assert_eq!(k["build_cache"].items[0].modified, Some(1791453600));
+    }
+
+    #[test]
     fn patterns_follow_fnmatch() {
         let m = |name: &str, p: &str| matches(name, &[p.to_string()]);
         assert!(m("my_db", "**db**"));
@@ -664,6 +705,7 @@ mod tests {
                 containers: "N/A".into(),
                 unique_size: "1GB".into(),
                 created_since: String::new(),
+                ..Default::default()
             }],
             ..Default::default()
         };

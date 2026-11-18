@@ -13,6 +13,7 @@ mod plan;
 mod render;
 mod runner;
 mod size;
+mod time;
 
 use std::io::{self, IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};

@@ -72,6 +72,7 @@ fn snaps(runner: &mut dyn Runner) -> Category {
             id: format!("{name}={rev}"),
             label: format!("{name} (Revision {rev})"),
             path: None,
+            ..Default::default()
         });
     }
     cat
@@ -104,6 +105,7 @@ fn journal(max: &str, runner: &mut dyn Runner) -> Category {
                 usage as f64 / 1e9
             ),
             path: None,
+            ..Default::default()
         });
     }
     cat
@@ -125,6 +127,7 @@ fn apt_cache() -> Category {
             id: "apt".into(),
             label: format!("{} heruntergeladene .deb-Pakete", debs.len()),
             path: None,
+            ..Default::default()
         });
     }
     cat
@@ -149,6 +152,7 @@ fn crashes() -> Category {
             id: f,
             label: name,
             path: None,
+            ..Default::default()
         });
     }
     cat
