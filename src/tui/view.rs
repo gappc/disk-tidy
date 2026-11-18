@@ -17,30 +17,32 @@ use crate::size::fmt_size;
 use crate::time::fmt_age;
 use crate::tui::app::{App, Mark, Popup, ReviewLine, Screen};
 
-/// Colours, or plain text when colour is off (`NO_COLOR`).
+/// Colours, or plain text when colour is off (`NO_COLOR`). Readable on any terminal theme:
+/// colour only as a badge (black on a coloured background), never as text colour on the
+/// terminal's own background; dim and bold instead of grey and yellow.
 struct Paint {
     colour: bool,
 }
 
 impl Paint {
-    fn fg(&self, c: Color) -> Style {
+    fn badge(&self, c: Color) -> Style {
         if self.colour {
-            Style::new().fg(c)
+            Style::new().fg(Color::Black).bg(c)
         } else {
             Style::new()
         }
     }
 
     fn dim(&self) -> Style {
-        if self.colour {
-            Style::new().fg(Color::DarkGray)
-        } else {
-            Style::new()
-        }
+        Style::new().add_modifier(Modifier::DIM)
+    }
+
+    fn strong(&self) -> Style {
+        Style::new().add_modifier(Modifier::BOLD)
     }
 
     fn level(&self, s: Safety) -> Style {
-        self.fg(level_colour(s))
+        self.badge(level_colour(s))
     }
 }
 
@@ -191,7 +193,7 @@ fn overview(frame: &mut Frame, app: &App, p: &Paint, area: Rect) -> (String, Str
         notes.push(Line::from(format!("Scanne {m} …")).style(p.dim()));
     }
     for (m, note) in &app.failed {
-        notes.push(Line::from(format!("Hinweis {m}: {note}")).style(p.fg(Color::Yellow)));
+        notes.push(Line::from(format!("Hinweis {m}: {note}")).style(p.strong()));
     }
     if app.scan_done && rows.is_empty() {
         notes.push(Line::from("Nichts gefunden."));
@@ -264,7 +266,7 @@ fn categories(frame: &mut Frame, app: &App, p: &Paint, area: Rect) -> (String, S
             Row::new(vec![
                 Cell::from(mark(app.mark_cat(c))),
                 Cell::from(Line::from(size(c.total())).right_aligned()),
-                Cell::from(c.title.clone()).style(p.level(c.safety)),
+                Cell::from(c.title.clone()),
                 Cell::from(cat_hint(c)).style(p.dim()),
             ])
         })
@@ -405,7 +407,7 @@ fn review(frame: &mut Frame, app: &App, p: &Paint, area: Rect) -> (String, Strin
                                 size(i.size),
                                 c.why
                             ),
-                            p.fg(Color::Yellow),
+                            p.strong(),
                         ),
                     ]))
                 }
@@ -462,14 +464,14 @@ fn progress(frame: &mut Frame, app: &App, p: &Paint, area: Rect) -> (String, Str
                     Status::Removed => {
                         freed += s;
                         Line::from(vec![
-                            Span::styled("✓", p.fg(Color::Green)),
+                            Span::styled("✓", p.badge(Color::Green)),
                             Span::raw(format!(" {title:<40} {:>10}", size(s))),
                         ])
                     }
                     Status::Failed => Line::from(vec![
-                        Span::styled("✗", p.fg(Color::Red)),
+                        Span::styled("✗", p.badge(Color::Red)),
                         Span::raw(format!(" {title:<40} ")),
-                        Span::styled("Fehler (siehe unten)", p.fg(Color::Red)),
+                        Span::styled("Fehler (siehe unten)", p.strong()),
                     ]),
                     Status::SkippedSudo => Line::from(format!("– {title:<40} übersprungen (sudo)")),
                     Status::SkippedPartial => {
@@ -610,7 +612,7 @@ fn confirm(frame: &mut Frame, app: &App, p: &Paint) {
     if n > 0 {
         lines.push(
             Line::from(format!("Davon ⚠ prüfen: {n} Einträge, {}.", size(s)))
-                .style(p.fg(Color::Yellow)),
+                .style(p.strong()),
         );
     }
     lines.push(Line::from(""));

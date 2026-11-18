@@ -246,3 +246,49 @@ fn shorten_keeps_both_ends() {
     let _ = Path::new("/");
     let _: Option<&Category> = None;
 }
+
+/// Readable on any terminal background: a cell with its own text colour also sets its own
+/// background (a badge), and nothing uses fixed grey.
+#[test]
+fn colours_are_readable_on_any_background() {
+    use ratatui::style::Color;
+    let check = |app: &App| {
+        let mut t = Terminal::new(TestBackend::new(100, 30)).unwrap();
+        t.draw(|f| draw(f, app, true)).unwrap();
+        let buf = t.backend().buffer().clone();
+        for cell in buf.content() {
+            if cell.symbol().trim().is_empty() {
+                continue;
+            }
+            assert!(
+                cell.fg == Color::Reset || cell.bg != Color::Reset,
+                "{:?} on default background: {:?}",
+                cell.fg,
+                cell.symbol()
+            );
+            assert_ne!(cell.fg, Color::DarkGray, "{:?}", cell.symbol());
+        }
+    };
+    let mut app = app();
+    app.on_scan(ScanEvent::Failed("docker".into(), "weg".into()));
+    check(&app);
+    keys(&mut app, &[Key::Enter]);
+    check(&app);
+    keys(&mut app, &[Key::Right]);
+    check(&app);
+    keys(&mut app, &[Key::Char('i')]);
+    check(&app);
+    keys(&mut app, &[Key::Esc, Key::Esc, Key::Esc, Key::Down, Key::Space, Key::Char('d')]);
+    check(&app);
+    keys(&mut app, &[Key::Enter]);
+    check(&app);
+    keys(&mut app, &[Key::Char('j')]);
+    let done = |key: &str, status| CatResult {
+        key: key.into(),
+        status,
+        items: Vec::new(),
+    };
+    app.on_delete(DeleteEvent::Done(done("trash", Status::Removed)));
+    app.on_delete(DeleteEvent::Done(done("build_cache", Status::Failed)));
+    check(&app);
+}
