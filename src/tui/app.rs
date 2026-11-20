@@ -106,6 +106,47 @@ pub enum ReviewLine {
     Entry { cat: usize, item: usize },
 }
 
+/// Order of the entries list; `s` switches to the next.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Sort {
+    /// Largest first, as the modules deliver them.
+    Size,
+    /// Oldest first; entries without an age last.
+    Age,
+    /// By path or name.
+    Name,
+}
+
+impl Sort {
+    fn next(self) -> Sort {
+        match self {
+            Sort::Size => Sort::Age,
+            Sort::Age => Sort::Name,
+            Sort::Name => Sort::Size,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Sort::Size => "Größe",
+            Sort::Age => "Alter",
+            Sort::Name => "Name",
+        }
+    }
+
+    /// Stable: equal entries keep their order.
+    fn apply(self, items: &mut [Item]) {
+        match self {
+            Sort::Size => items.sort_by_key(|i| std::cmp::Reverse(i.size)),
+            Sort::Age => items.sort_by_key(|i| (i.modified.is_none(), i.modified)),
+            Sort::Name => items.sort_by_cached_key(|i| match &i.path {
+                Some(p) => p.to_string_lossy().into_owned(),
+                None => i.label.clone(),
+            }),
+        }
+    }
+}
+
 pub struct App {
     usage: fn(&Path) -> Usage,
     mount: fn(&Path) -> PathBuf,
@@ -138,6 +179,10 @@ pub struct App {
     pub report: Option<Report>,
     /// A key was pressed on the report: the loop starts a new scan and calls `reset_scan`.
     pub rescan_requested: bool,
+    /// Order of the entries list, kept for every category opened.
+    pub sort: Sort,
+    /// Spinner frame: the loop sets it from the clock, so it turns while workers are busy.
+    pub tick: usize,
 }
 
 fn sel_key(c: &Category, i: &Item) -> (String, String) {
@@ -176,6 +221,8 @@ impl App {
             log: Vec::new(),
             report: None,
             rescan_requested: false,
+            tick: 0,
+            sort: Sort::Size,
         }
     }
 
@@ -194,11 +241,8 @@ impl App {
                     .get(self.row_cursor)
                     .map(|r| (r.mount.clone(), r.safety));
                 let cat = self.open_indexes().get(self.cat_cursor).copied();
+                // Nothing is ticked by default: everything to delete is chosen by hand.
                 for c in cats {
-                    if c.safety == Safety::Safe {
-                        let keys = c.items.iter().filter(|i| tickable(&c, i));
-                        self.selected.extend(keys.map(|i| sel_key(&c, i)));
-                    }
                     self.mounts.push((self.mount)(&c.path));
                     self.cats.push(c);
                 }
@@ -343,7 +387,7 @@ impl App {
         self.open_cat.map(|i| &self.cats[i])
     }
 
-    /// Entries of the open category, largest first.
+    /// Entries of the open category, in the order of `sort`.
     pub fn entries(&self) -> &[Item] {
         self.open_cat().map_or(&[], |c| &c.items)
     }
@@ -406,12 +450,17 @@ impl App {
     }
 
     /// Free space on `mount` once the ticked entries there are gone.
+    /// Free space on the partition now.
+    pub fn free_now(&self, mount: &Path) -> u64 {
+        (self.usage)(mount).free
+    }
+
     pub fn free_after(&self, mount: &Path) -> u64 {
         let selected: u64 = (0..self.cats.len())
             .filter(|&i| self.mounts[i] == mount)
             .map(|i| self.selected_size(&self.cats[i]))
             .sum();
-        (self.usage)(mount).free + selected
+        self.free_now(mount) + selected
     }
 
     pub fn review_lines(&self) -> Vec<ReviewLine> {
@@ -550,6 +599,7 @@ impl App {
             (Screen::Categories, Key::Enter | Key::Right) => {
                 if let Some(&i) = self.open_indexes().get(self.cat_cursor) {
                     self.open_cat = Some(i);
+                    self.sort.apply(&mut self.cats[i].items);
                     self.entry_cursor = 0;
                     self.screen = Screen::Entries;
                 }
@@ -558,6 +608,7 @@ impl App {
             (Screen::Entries, Key::Esc | Key::Left) => self.screen = Screen::Categories,
             (Screen::Entries, Key::Char('a')) => self.set_open_cat(true),
             (Screen::Entries, Key::Char('n')) => self.set_open_cat(false),
+            (Screen::Entries, Key::Char('s')) => self.next_sort(),
             (Screen::Review, Key::Esc | Key::Left) => self.screen = self.back,
             (Screen::Review, Key::Enter) => {
                 self.popup = if self.any_selected() {
@@ -567,6 +618,18 @@ impl App {
                 }
             }
             _ => {}
+        }
+    }
+
+    /// Sorts the open category the next way; the cursor stays on its entry.
+    fn next_sort(&mut self) {
+        let Some(i) = self.open_cat else { return };
+        self.sort = self.sort.next();
+        let items = &mut self.cats[i].items;
+        let at = items.get(self.entry_cursor).map(|it| it.id.clone());
+        self.sort.apply(items);
+        if let Some(n) = at.and_then(|id| items.iter().position(|it| it.id == id)) {
+            self.entry_cursor = n;
         }
     }
 

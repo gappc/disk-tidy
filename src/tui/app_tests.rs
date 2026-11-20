@@ -103,6 +103,28 @@ pub(crate) fn app() -> App {
     app
 }
 
+/// Ticks every tickable GEFAHRLOS entry, as a user would by hand.
+pub(crate) fn pick_safe(app: &mut App) {
+    for c in &app.cats {
+        if c.safety == Safety::Safe {
+            let keys = c.items.iter().filter(|i| tickable(c, i));
+            app.selected.extend(keys.map(|i| sel_key(c, i)));
+        }
+    }
+}
+
+pub(crate) fn picked_scanning() -> App {
+    let mut app = scanning();
+    pick_safe(&mut app);
+    app
+}
+
+pub(crate) fn picked() -> App {
+    let mut app = app();
+    pick_safe(&mut app);
+    app
+}
+
 pub(crate) fn keys(app: &mut App, keys: &[Key]) -> Action {
     let mut last = Action::None;
     for k in keys {
@@ -121,10 +143,10 @@ pub(crate) fn item<'a>(app: &'a App, key: &str, id: &str) -> (&'a Category, &'a 
 }
 
 #[test]
-fn safe_preselected_check_not() {
+fn nothing_preselected() {
     let app = app();
-    assert_eq!(app.selected_total(), 167);
-    assert_eq!(app.mark_cat(find(&app, "trash")), Mark::On);
+    assert_eq!(app.selected_total(), 0);
+    assert_eq!(app.mark_cat(find(&app, "trash")), Mark::Off);
     assert_eq!(app.mark_cat(find(&app, "containers")), Mark::Off);
     assert_eq!(app.selected_check(), (0, 0));
     assert!(app.scanning.is_none() && app.scan_done);
@@ -132,7 +154,7 @@ fn safe_preselected_check_not() {
 
 #[test]
 fn overview_rows_per_partition_and_level() {
-    let app = app();
+    let app = picked();
     let row = |mount: &str, safety, entries, size, selected| Row {
         mount: PathBuf::from(mount),
         safety,
@@ -154,7 +176,7 @@ fn overview_rows_per_partition_and_level() {
 
 #[test]
 fn space_on_row_toggles_selectable_only() {
-    let mut app = app();
+    let mut app = picked();
     keys(&mut app, &[Key::Down, Key::Space]);
     assert_eq!(app.selected_check(), (1, 30));
     assert_eq!(app.mark_cat(find(&app, "stopped_images")), Mark::Fixed);
@@ -167,7 +189,7 @@ fn space_on_row_toggles_selectable_only() {
 
 #[test]
 fn partial_mark() {
-    let mut app = app();
+    let mut app = picked();
     keys(&mut app, &[Key::Enter]);
     assert_eq!(
         app.categories()
@@ -189,7 +211,7 @@ fn partial_mark() {
 
 #[test]
 fn fixed_cannot_be_toggled() {
-    let mut app = app();
+    let mut app = picked();
     keys(&mut app, &[Key::Down, Key::Down, Key::Space]);
     assert!(matches!(&app.popup, Popup::Message(m) if m.starts_with("Nicht auswählbar")));
     assert_eq!(app.selected_total(), 167);
@@ -204,7 +226,7 @@ fn fixed_cannot_be_toggled() {
 
 #[test]
 fn idless_toggles_whole_category() {
-    let mut app = app();
+    let mut app = picked();
     keys(&mut app, &[Key::Enter, Key::Down, Key::Right]);
     let (c, c1) = item(&app, "build_cache", "c1");
     assert_eq!(app.mark_item(c, c1), Mark::Whole);
@@ -232,7 +254,7 @@ fn navigation_and_back() {
 
 #[test]
 fn review_waits_for_scan() {
-    let mut app = scanning();
+    let mut app = picked_scanning();
     keys(&mut app, &[Key::Char('d')]);
     assert_eq!(app.screen, Screen::Overview);
     assert!(matches!(&app.popup, Popup::Message(_)));
@@ -243,7 +265,7 @@ fn review_waits_for_scan() {
 
 #[test]
 fn review_groups_by_partition() {
-    let mut app = app();
+    let mut app = picked();
     keys(&mut app, &[Key::Down, Key::Space, Key::Char('d')]);
     assert_eq!(app.screen, Screen::Review);
     let lines = app.review_lines();
@@ -284,7 +306,7 @@ fn review_groups_by_partition() {
 
 #[test]
 fn empty_review_has_no_confirm() {
-    let mut app = app();
+    let mut app = picked();
     keys(
         &mut app,
         &[Key::Space, Key::Down, Key::Down, Key::Down, Key::Space],
@@ -297,7 +319,7 @@ fn empty_review_has_no_confirm() {
 
 #[test]
 fn confirm_builds_plan_of_ticked() {
-    let mut app = app();
+    let mut app = picked();
     // tick containers, untick trash b
     keys(
         &mut app,
@@ -350,7 +372,7 @@ fn confirm_builds_plan_of_ticked() {
 
 #[test]
 fn quit_refused_while_deleting() {
-    let mut app = app();
+    let mut app = picked();
     assert!(matches!(
         keys(&mut app, &[Key::Char('d'), Key::Enter, Key::Char('j')]),
         Action::Delete(_)
@@ -391,7 +413,7 @@ fn report_then_rescan() {
 #[test]
 fn finished_fills_categories_without_progress() {
     use crate::clean::{CatResult, Status};
-    let mut app = app();
+    let mut app = picked();
     keys(&mut app, &[Key::Char('d'), Key::Enter, Key::Char('j')]);
     let mut report = Report::error("x".into());
     report.categories = vec![CatResult {
@@ -462,11 +484,15 @@ fn non_utf8_entries_are_not_tickable() {
     let mut app = App::new(usage, mount);
     app.on_scan(ScanEvent::Done(vec![c]));
     app.on_scan(ScanEvent::Finished);
+    assert_eq!(app.selected_total(), 0);
+    keys(&mut app, &[Key::Space]);
     assert_eq!(app.selected_total(), 5);
     let (c, bad) = item(&app, "trash", "bad");
     assert_eq!(app.mark_item(c, bad), Mark::Fixed);
     assert_eq!(app.mark_cat(c), Mark::On);
-    keys(&mut app, &[Key::Enter, Key::Right, Key::Down, Key::Space]);
+    keys(&mut app, &[Key::Enter, Key::Right]);
+    assert_eq!(app.current().unwrap().1.unwrap().id, "bad"); // largest first
+    keys(&mut app, &[Key::Space]);
     assert_eq!(app.selected_total(), 5);
     assert!(matches!(&app.popup, Popup::Message(m) if m.contains("UTF-8")));
 }
@@ -494,4 +520,74 @@ fn plan_carries_image_fingerprint() {
         plan.categories[0].items[0].fingerprint.as_deref(),
         Some("sha256:old")
     );
+}
+
+fn ids(app: &App) -> Vec<&str> {
+    app.entries().iter().map(|i| i.id.as_str()).collect()
+}
+
+/// Images "neu" (largest), "alt" (oldest), "mitte"; "ohne" has no age.
+fn images() -> App {
+    let mut c = cat(
+        "containers",
+        "/",
+        Safety::Check,
+        run(true),
+        &[("neu", 40), ("ohne", 30), ("mitte", 20), ("alt", 10)],
+    );
+    for (i, t) in [Some(300), None, Some(200), Some(100)]
+        .into_iter()
+        .enumerate()
+    {
+        c.items[i].modified = t;
+    }
+    let mut app = App::new(usage, mount);
+    app.on_scan(ScanEvent::Done(vec![
+        c,
+        cat(
+            "trash",
+            "/",
+            Safety::Check,
+            Remover::BuildDirs,
+            &[("z", 2), ("b", 1)],
+        ),
+    ]));
+    app.on_scan(ScanEvent::Finished);
+    keys(&mut app, &[Key::Enter, Key::Right]);
+    app
+}
+
+#[test]
+fn s_cycles_entry_sort_and_keeps_cursor() {
+    let mut app = images();
+    assert_eq!(app.sort, Sort::Size);
+    assert_eq!(ids(&app), ["neu", "ohne", "mitte", "alt"]);
+    keys(&mut app, &[Key::Down, Key::Down]); // on "mitte"
+    keys(&mut app, &[Key::Char('s')]);
+    assert_eq!(app.sort, Sort::Age);
+    // Oldest first; entries without an age last.
+    assert_eq!(ids(&app), ["alt", "mitte", "neu", "ohne"]);
+    assert_eq!(app.current().unwrap().1.unwrap().id, "mitte");
+    keys(&mut app, &[Key::Char('s')]);
+    assert_eq!(app.sort, Sort::Name);
+    assert_eq!(ids(&app), ["alt", "mitte", "neu", "ohne"]);
+    keys(&mut app, &[Key::Char('s')]);
+    assert_eq!(app.sort, Sort::Size);
+    assert_eq!(ids(&app), ["neu", "ohne", "mitte", "alt"]);
+    assert_eq!(app.current().unwrap().1.unwrap().id, "mitte");
+}
+
+#[test]
+fn sort_applies_to_next_category_and_keeps_selection() {
+    let mut app = images();
+    keys(
+        &mut app,
+        &[Key::Down, Key::Space, Key::Char('s'), Key::Char('s')],
+    );
+    assert_eq!(app.sort, Sort::Name);
+    let (c, ohne) = item(&app, "containers", "ohne");
+    assert_eq!(app.mark_item(c, ohne), Mark::On);
+    assert_eq!(app.selected_total(), 30);
+    keys(&mut app, &[Key::Left, Key::Down, Key::Right]);
+    assert_eq!(ids(&app), ["b", "z"]);
 }

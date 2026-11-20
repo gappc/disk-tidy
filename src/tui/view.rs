@@ -79,6 +79,12 @@ fn mark(m: Mark) -> &'static str {
     }
 }
 
+/// Turns once a second at the loop's 100 ms redraw: shows that a worker is still busy.
+fn spinner(app: &App) -> &'static str {
+    const FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+    FRAMES[app.tick % FRAMES.len()]
+}
+
 fn now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -134,6 +140,13 @@ pub fn draw(frame: &mut Frame, app: &App, colour: bool) {
         Screen::Report => "",
         _ => "Esc zurück",
     };
+    // While a worker is busy, a spinner leads the header on every screen.
+    let busy = !app.scan_done || app.screen == Screen::Deleting;
+    let title = if busy {
+        format!(" {}{title}", spinner(app))
+    } else {
+        title
+    };
     let pad = (head.width as usize).saturating_sub(title.chars().count() + right.chars().count());
     let header = format!("{title}{}{right}", " ".repeat(pad));
     frame.render_widget(
@@ -169,10 +182,11 @@ fn overview(frame: &mut Frame, app: &App, p: &Paint, area: Rect) -> (String, Str
             } else {
                 "–".into()
             };
-            let free = if first {
-                size(app.free_after(&r.mount))
+            // Free space belongs to the partition: shown on its first row only.
+            let (free_now, free_after) = if first {
+                (size(app.free_now(&r.mount)), size(app.free_after(&r.mount)))
             } else {
-                String::new()
+                (String::new(), String::new())
             };
             Row::new(vec![
                 Cell::from(if first {
@@ -184,13 +198,21 @@ fn overview(frame: &mut Frame, app: &App, p: &Paint, area: Rect) -> (String, Str
                 Cell::from(Line::from(r.entries.to_string()).right_aligned()),
                 Cell::from(Line::from(size(r.size)).right_aligned()),
                 Cell::from(Line::from(selected).right_aligned()),
-                Cell::from(Line::from(free).right_aligned()),
+                Cell::from(Line::from(free_now).right_aligned()),
+                Cell::from(Line::from(free_after).right_aligned()),
             ])
         })
         .collect();
     let mut notes: Vec<Line> = Vec::new();
-    if let Some(m) = &app.scanning {
-        notes.push(Line::from(format!("Scanne {m} …")).style(p.dim()));
+    if !app.scan_done {
+        let what = app
+            .scanning
+            .as_ref()
+            .map_or(String::new(), |m| format!("{m} "));
+        notes.push(Line::from(vec![
+            Span::raw(spinner(app)),
+            Span::styled(format!(" Scanne {what}…"), p.dim()),
+        ]));
     }
     for (m, note) in &app.failed {
         notes.push(Line::from(format!("Hinweis {m}: {note}")).style(p.strong()));
@@ -203,12 +225,14 @@ fn overview(frame: &mut Frame, app: &App, p: &Paint, area: Rect) -> (String, Str
     let table = Table::new(
         table_rows,
         [
+            // Fits 80 columns: 74 plus 6 gaps.
             Constraint::Max(14),
             Constraint::Length(12),
+            Constraint::Length(8),
             Constraint::Length(9),
             Constraint::Length(10),
+            Constraint::Length(10),
             Constraint::Length(11),
-            Constraint::Length(12),
         ],
     )
     .header(
@@ -218,6 +242,7 @@ fn overview(frame: &mut Frame, app: &App, p: &Paint, area: Rect) -> (String, Str
             Cell::from(Line::from("Einträge").right_aligned()),
             Cell::from(Line::from("Größe").right_aligned()),
             Cell::from(Line::from("ausgewählt").right_aligned()),
+            Cell::from(Line::from("frei jetzt").right_aligned()),
             Cell::from(Line::from("frei danach").right_aligned()),
         ])
         .style(Style::new().add_modifier(Modifier::BOLD))
@@ -331,18 +356,19 @@ fn entries(frame: &mut Frame, app: &App, p: &Paint, area: Rect) -> (String, Stri
         TableState::default().with_selected((!c.items.is_empty()).then(|| app.cursor()));
     frame.render_stateful_widget(table, area, &mut state);
     let keys = if !c.selectable() {
-        " nicht auswählbar · i Details  ← zurück  d prüfen & löschen".into()
+        " nicht auswählbar · i Details  s sortieren  d prüfen & löschen".into()
     } else if c.all_or_nothing() {
-        " nur als Ganzes: ␣ an/aus  i Details  ← zurück  d prüfen & löschen".into()
+        " nur als Ganzes: ␣ an/aus  i Details  s sortieren  d prüfen & löschen".into()
     } else {
-        " ␣ an/aus  a alle  n keine  i Details  ← zurück  d prüfen & löschen".into()
+        " ␣ an/aus  a alle  n keine  i Details  s sortieren  d prüfen & löschen".into()
     };
     (
         format!(
-            "{} › {} · {} · {}",
+            "{} › {} · {} · nach {} · {}",
             breadcrumb(app),
             c.title,
             c.items.len(),
+            app.sort.name(),
             auswahl(app)
         ),
         keys,
@@ -450,7 +476,10 @@ fn reason(r: Reason) -> &'static str {
 fn progress(frame: &mut Frame, app: &App, p: &Paint, area: Rect) -> (String, String) {
     let mut lines: Vec<Line> = Vec::new();
     if app.rechecking {
-        lines.push(Line::from("Prüfe neu …").style(p.dim()));
+        lines.push(Line::from(vec![
+            Span::raw(spinner(app)),
+            Span::styled(" Prüfe neu …", p.dim()),
+        ]));
         lines.push(Line::from(""));
     }
     let (mut freed, mut total, mut finished) = (0, 0, 0);
@@ -479,7 +508,9 @@ fn progress(frame: &mut Frame, app: &App, p: &Paint, area: Rect) -> (String, Str
                     }
                 }
             }
-            None if app.running.as_deref() == Some(key) => Line::from(format!("… {title}")),
+            None if app.running.as_deref() == Some(key) => {
+                Line::from(format!("{} {title}", spinner(app)))
+            }
             None if app.report.is_some() => {
                 Line::from(format!("– {title:<40} nicht mehr gültig")).style(p.dim())
             }
@@ -611,8 +642,7 @@ fn confirm(frame: &mut Frame, app: &App, p: &Paint) {
     let (n, s) = app.selected_check();
     if n > 0 {
         lines.push(
-            Line::from(format!("Davon ⚠ prüfen: {n} Einträge, {}.", size(s)))
-                .style(p.strong()),
+            Line::from(format!("Davon ⚠ prüfen: {n} Einträge, {}.", size(s))).style(p.strong()),
         );
     }
     lines.push(Line::from(""));
@@ -627,12 +657,13 @@ fn help(frame: &mut Frame) {
         "← Esc     zurück",
         "␣         an/aus (Zeile, Kategorie, Eintrag)",
         "a n       alle / keine Einträge",
+        "s         sortieren: Größe, Alter, Name",
         "i         Details",
         "d         prüfen & löschen",
         "q         Ende",
         "",
-        "✓ gefahrlos  vorausgewählt",
-        "⚠ prüfen     wählbar, nie vorausgewählt",
+        "✓ gefahrlos  wählbar",
+        "⚠ prüfen     wählbar, vorher ansehen",
         "✗ vorsicht   nur von Hand",
         "ℹ nur info   nur zur Übersicht",
     ];

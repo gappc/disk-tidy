@@ -15,7 +15,7 @@ risk, a report afterwards.
 
 - `disk-tidy` without a command, on a terminal, opens the TUI.
 - Overview → drill in → tick/untick → review → confirm → progress → report → fresh scan.
-- GEFAHRLOS entries pre-selected; PRÜFEN entries selectable (never pre-selected); VORSICHT and
+- Nothing pre-selected: GEFAHRLOS and PRÜFEN entries are ticked by hand; VORSICHT and
   NUR INFO visible but never selectable.
 - Scan and deletion run in the background with visible progress; the UI stays responsive.
 

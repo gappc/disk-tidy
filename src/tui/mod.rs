@@ -6,7 +6,7 @@ pub mod worker;
 use std::io::{self, Stdout};
 use std::process::{Command, Stdio};
 use std::sync::mpsc::{self, Receiver};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
@@ -119,7 +119,9 @@ pub fn run(cfg: &Config, colour: bool) -> anyhow::Result<()> {
     let mut app = App::new(disk_usage, mount_point);
     let mut scan_rx = start_scan(cfg);
     let mut delete_rx: Option<Receiver<DeleteEvent>> = None;
+    let start = Instant::now();
     loop {
+        app.tick = (start.elapsed().as_millis() / 100) as usize;
         guard
             .terminal
             .draw(|frame| view::draw(frame, &app, colour))?;

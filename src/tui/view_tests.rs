@@ -7,7 +7,9 @@ use ratatui::backend::TestBackend;
 use super::*;
 use crate::clean::{CatResult, Dropped, Reason, Report, ReportItem, Status};
 use crate::model::{Category, Remover, Safety};
-use crate::tui::app::tests::{app, cat, keys, mount, run, scanning, usage};
+use crate::tui::app::tests::{
+    app, cat, keys, mount, picked, picked_scanning, run, scanning, usage,
+};
 use crate::tui::app::{App, DeleteEvent, Key, ScanEvent};
 
 fn screen(app: &App, w: u16, h: u16) -> String {
@@ -37,7 +39,7 @@ fn now() -> u64 {
 
 #[test]
 fn overview_shows_rows_and_total() {
-    let s = screen(&app(), 80, 24);
+    let s = screen(&picked(), 80, 24);
     has(&s, "Auswahl");
     has(&s, "167 B");
     has(&s, "✓ gefahrlos");
@@ -143,7 +145,7 @@ fn confirm_names_check_part() {
 
 #[test]
 fn progress_and_report_lines() {
-    let mut app = app();
+    let mut app = picked();
     keys(&mut app, &[Key::Char('d'), Key::Enter, Key::Char('j')]);
     app.on_delete(DeleteEvent::Rechecking);
     has(&screen(&app, 80, 24), "Prüfe neu …");
@@ -278,7 +280,17 @@ fn colours_are_readable_on_any_background() {
     check(&app);
     keys(&mut app, &[Key::Char('i')]);
     check(&app);
-    keys(&mut app, &[Key::Esc, Key::Esc, Key::Esc, Key::Down, Key::Space, Key::Char('d')]);
+    keys(
+        &mut app,
+        &[
+            Key::Esc,
+            Key::Esc,
+            Key::Esc,
+            Key::Down,
+            Key::Space,
+            Key::Char('d'),
+        ],
+    );
     check(&app);
     keys(&mut app, &[Key::Enter]);
     check(&app);
@@ -291,4 +303,87 @@ fn colours_are_readable_on_any_background() {
     app.on_delete(DeleteEvent::Done(done("trash", Status::Removed)));
     app.on_delete(DeleteEvent::Done(done("build_cache", Status::Failed)));
     check(&app);
+}
+
+#[test]
+fn spinner_turns_with_tick() {
+    let mut app = scanning();
+    app.tick = 0;
+    has(&screen(&app, 80, 24), "⠋ Scanne docker …");
+    app.tick = 1;
+    has(&screen(&app, 80, 24), "⠙ Scanne docker …");
+    app.tick = 10;
+    has(&screen(&app, 80, 24), "⠋ Scanne docker …");
+}
+
+#[test]
+fn spinner_before_first_module() {
+    let app = App::new(usage, mount);
+    has(&screen(&app, 80, 24), "⠋ Scanne …");
+}
+
+#[test]
+fn spinner_while_deleting_not_on_report() {
+    let mut app = picked();
+    keys(&mut app, &[Key::Char('d'), Key::Enter, Key::Char('j')]);
+    app.on_delete(DeleteEvent::Rechecking);
+    let s = screen(&app, 80, 24);
+    has(&s, "⠋ Prüfe neu …");
+    has(&s, "⠋ Löschen ·");
+    app.on_delete(DeleteEvent::Started("trash".into()));
+    has(&screen(&app, 80, 24), "⠋ Titel trash");
+    app.on_delete(DeleteEvent::Finished(Report::error("x".into())));
+    assert!(!screen(&app, 80, 24).contains('⠋'));
+}
+
+fn head(s: &str) -> &str {
+    s.lines().next().unwrap()
+}
+
+#[test]
+fn spinner_in_header_while_busy() {
+    let mut a = picked_scanning();
+    assert!(head(&screen(&a, 80, 24)).starts_with(" ⠋ disk-tidy"));
+    keys(&mut a, &[Key::Enter]);
+    assert!(head(&screen(&a, 80, 24)).starts_with(" ⠋ /"));
+    a.on_scan(ScanEvent::Finished);
+    assert!(!head(&screen(&a, 80, 24)).contains('⠋'));
+
+    let mut a = picked();
+    assert!(!head(&screen(&a, 80, 24)).contains('⠋'));
+    keys(&mut a, &[Key::Char('d'), Key::Enter, Key::Char('j')]);
+    a.on_delete(DeleteEvent::Rechecking);
+    assert!(head(&screen(&a, 80, 24)).starts_with(" ⠋ Löschen ·"));
+}
+
+#[test]
+fn overview_shows_free_now_and_after() {
+    // usage(): 1000 B free; the ticked GEFAHRLOS entries add 167 B.
+    let s = screen(&picked(), 80, 24);
+    let header = s.lines().find(|l| l.contains("Partition")).unwrap();
+    assert!(
+        header.contains("frei jetzt") && header.contains("frei danach"),
+        "{header}"
+    );
+    let first = s.lines().find(|l| l.contains("✓ gefahrlos")).unwrap();
+    assert!(
+        first.contains("1.0 kB") && first.contains("1.2 kB"),
+        "{first}"
+    );
+}
+
+#[test]
+fn entries_show_sort() {
+    let mut a = app();
+    keys(&mut a, &[Key::Enter, Key::Right]);
+    let s = screen(&a, 80, 24);
+    has(head(&s), "nach Größe");
+    has(s.lines().last().unwrap(), "s sortieren");
+    keys(&mut a, &[Key::Char('s')]);
+    has(head(&screen(&a, 80, 24)), "nach Alter");
+    keys(&mut a, &[Key::Char('?')]);
+    has(
+        &screen(&a, 80, 24),
+        "s         sortieren: Größe, Alter, Name",
+    );
 }
